@@ -3,6 +3,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import { fetchArtistTasks, createTask, updateTask, fetchUsers } from "../lib/api";
 import { useAuthStore } from "../context/auth-store";
+import { FileUpload } from "../components/file-upload";
 
 type Artist = {
   id: string;
@@ -322,21 +323,36 @@ export function ArtistDetailPage() {
           {contracts.length === 0 && <EmptyState text="No contracts yet." />}
           {contracts.map((c) => (
             <div key={c.id} className="flex items-center justify-between rounded-xl border bg-white p-4">
-              <div>
-                <p className="font-medium">{c.title}</p>
-                <div className="mt-1 flex gap-3 text-xs text-slate-500">
-                  {c.signed_date && <span>Signed: {c.signed_date}</span>}
-                  {c.expiry_date && <span className={isExpiringSoon(c.expiry_date) ? "text-amber-600 font-medium" : ""}>Expires: {c.expiry_date}</span>}
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-500">
+                  <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-medium">{c.title}</p>
+                  <div className="mt-1 flex gap-3 text-xs text-slate-500">
+                    {c.signed_date && <span>✍️ Signed: {c.signed_date}</span>}
+                    {c.expiry_date && (
+                      <span className={isExpiringSoon(c.expiry_date) ? "text-amber-600 font-medium" : ""}>
+                        {isExpiringSoon(c.expiry_date) ? "⚠️" : "📅"} Expires: {c.expiry_date}
+                      </span>
+                    )}
+                    <span>Added: {new Date(c.created_at).toLocaleDateString()}</span>
+                  </div>
                 </div>
               </div>
               <div className="flex gap-2">
                 {c.file_url && (
                   <a href={c.file_url} target="_blank" rel="noopener noreferrer"
-                    className="rounded px-3 py-1 text-xs text-blue-600 hover:bg-blue-50">View</a>
+                    className="flex items-center gap-1 rounded-lg border px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50">
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
+                    Download
+                  </a>
                 )}
                 {user?.role === "admin" && (
                   <button onClick={() => handleDeleteContract(c.id)}
-                    className="rounded px-3 py-1 text-xs text-red-600 hover:bg-red-50">Delete</button>
+                    className="rounded-lg border px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">Delete</button>
                 )}
               </div>
             </div>
@@ -390,7 +406,22 @@ export function ArtistDetailPage() {
         <Modal title="Add Contract" onClose={() => setShowContractModal(false)}
           onSave={handleCreateContract} saving={savingContract} disabled={!contractForm.title} saveLabel="Add Contract">
           <Field label="Title *" value={contractForm.title} onChange={(v) => setContractForm({ ...contractForm, title: v })} />
-          <Field label="File URL (optional)" value={contractForm.fileUrl} onChange={(v) => setContractForm({ ...contractForm, fileUrl: v })} />
+          <FileUpload
+            artistId={id!}
+            onUploaded={(url, fileName) => {
+              setContractForm((f) => ({
+                ...f,
+                fileUrl: url,
+                title: f.title || fileName.replace(/\.[^.]+$/, ""),
+              }));
+            }}
+          />
+          {contractForm.fileUrl && (
+            <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+              File uploaded successfully
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Field label="Signed Date" type="date" value={contractForm.signedDate} onChange={(v) => setContractForm({ ...contractForm, signedDate: v })} />
             <Field label="Expiry Date" type="date" value={contractForm.expiryDate} onChange={(v) => setContractForm({ ...contractForm, expiryDate: v })} />
