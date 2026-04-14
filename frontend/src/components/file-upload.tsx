@@ -4,9 +4,12 @@ import { supabase } from "../lib/supabase";
 interface FileUploadProps {
   artistId: string;
   onUploaded: (url: string, fileName: string) => void;
+  label?: string;
+  accept?: string;
+  hint?: string;
 }
 
-export function FileUpload({ artistId, onUploaded }: FileUploadProps) {
+export function FileUpload({ artistId, onUploaded, label, accept, hint }: FileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -63,7 +66,7 @@ export function FileUpload({ artistId, onUploaded }: FileUploadProps) {
   return (
     <div className="space-y-2">
       <label className="mb-1 block text-xs font-medium text-slate-600">
-        Upload Contract File
+        {label ?? "Upload File"}
       </label>
       <div
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -74,7 +77,7 @@ export function FileUpload({ artistId, onUploaded }: FileUploadProps) {
           dragOver ? "border-slate-500 bg-slate-50" : "border-slate-200 hover:border-slate-400 hover:bg-slate-50"
         } ${uploading ? "cursor-not-allowed opacity-60" : ""}`}>
         <input ref={inputRef} type="file" className="hidden"
-          accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+          accept={accept ?? ".pdf,.doc,.docx,.jpg,.jpeg,.png,.csv,.xlsx,.wav,.mp3"}
           onChange={handleFileChange} disabled={uploading} />
         {uploading ? (
           <div className="w-full space-y-2">
@@ -91,7 +94,7 @@ export function FileUpload({ artistId, onUploaded }: FileUploadProps) {
                 d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
             <p className="text-sm font-medium text-slate-700">Drop file here or click to browse</p>
-            <p className="mt-1 text-xs text-slate-400">PDF, Word, JPG, PNG — max 50MB</p>
+            <p className="mt-1 text-xs text-slate-400">{hint ?? "Upload the required deliverable — max 50MB"}</p>
           </>
         )}
       </div>

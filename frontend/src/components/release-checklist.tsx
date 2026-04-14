@@ -26,6 +26,114 @@ const GROUP_ICONS: Record<string, string> = {
   "Post-Release": "📊",
 };
 
+const DELIVERABLE_SPEC: Record<string, { label: string; accept: string; hint: string }> = {
+  "Brief & Concept Approval": {
+    label: "Upload Written Brief + Mood Board",
+    accept: ".pdf,.doc,.docx,.txt",
+    hint: "Required: Written brief and mood board (PDF/Doc)"
+  },
+  "Recording Session Booked": {
+    label: "Upload Studio Booking Confirmation",
+    accept: ".pdf,.jpg,.jpeg,.png",
+    hint: "Required: booking confirmation screenshot/email"
+  },
+  "Rough Mix Delivered": {
+    label: "Upload Rough Mix Audio",
+    accept: ".wav,.mp3",
+    hint: "Required: rough mix audio file (WAV/MP3)"
+  },
+  "Final Mix Approved": {
+    label: "Upload Final Mix + Notes",
+    accept: ".wav,.mp3,.pdf,.doc,.docx",
+    hint: "Required: final mix audio + mix notes document"
+  },
+  "Mastering Complete": {
+    label: "Upload Mastered WAV + Metering Report",
+    accept: ".wav,.pdf,.doc,.docx",
+    hint: "Required: mastered WAV and metering report"
+  },
+  "Final Master WAV Delivered": {
+    label: "Upload Final 24-bit Master WAV",
+    accept: ".wav",
+    hint: "Required: final 24-bit WAV master"
+  },
+  "Split Sheets Signed": {
+    label: "Upload Signed Split Sheets",
+    accept: ".pdf",
+    hint: "Required: signed split sheets (PDF)"
+  },
+  "Publishing Registration": {
+    label: "Upload Publishing Registration Proof",
+    accept: ".pdf,.jpg,.jpeg,.png",
+    hint: "Required: registration confirmation email/screenshot"
+  },
+  "Front Cover Artwork (3000x3000 300dpi)": {
+    label: "Upload Front Cover Artwork",
+    accept: ".jpg,.jpeg,.png",
+    hint: "Required: 3000x3000 JPG/PNG at 300dpi"
+  },
+  "Back Cover & Spine": {
+    label: "Upload Back Cover + Spine",
+    accept: ".pdf,.jpg,.jpeg,.png",
+    hint: "Deliverable: back cover and spine design"
+  },
+  "Artist Bio Updated": {
+    label: "Upload Updated Artist Bio",
+    accept: ".txt,.doc,.docx,.pdf",
+    hint: "Required: updated artist bio text"
+  },
+  "Metadata Sheet Complete (ISRC, BPM, Key, Genre)": {
+    label: "Upload Metadata Sheet",
+    accept: ".csv,.xlsx,.xls,.pdf",
+    hint: "Required: metadata sheet (ISRC, BPM, Key, Genre)"
+  },
+  "Lyrics Proofread & Approved": {
+    label: "Upload Approved Lyrics",
+    accept: ".txt,.doc,.docx,.pdf",
+    hint: "Required: proofread lyrics file"
+  },
+  "Distributor Account Ready": {
+    label: "Upload Distributor Account Proof",
+    accept: ".jpg,.jpeg,.png,.pdf",
+    hint: "Required: screenshot of active distributor account"
+  },
+  "Distribution Submission": {
+    label: "Upload Distribution Confirmation",
+    accept: ".pdf,.txt,.doc,.docx,.jpg,.jpeg,.png",
+    hint: "Required: distribution confirmation ID/screenshot"
+  },
+  "Pre-Save Link Created": {
+    label: "Upload/Enter Pre-Save Link Proof",
+    accept: ".txt,.doc,.docx,.pdf",
+    hint: "Required: URL or screenshot of pre-save link"
+  },
+  "Social Media Content Calendar": {
+    label: "Upload Content Calendar",
+    accept: ".xlsx,.xls,.csv,.pdf,.txt,.doc,.docx",
+    hint: "Required: content calendar (Notion/Sheet export)"
+  },
+  "Press Release Written": {
+    label: "Upload Press Release",
+    accept: ".doc,.docx,.pdf",
+    hint: "Required: final press release document"
+  },
+  "Playlist Pitching Submitted": {
+    label: "Upload Pitching Evidence",
+    accept: ".csv,.xlsx,.xls,.pdf,.txt,.doc,.docx",
+    hint: "Required: list of curators pitched"
+  },
+  "Music Video / Visualizer": {
+    label: "Upload Video/Visualizer Link Proof",
+    accept: ".txt,.doc,.docx,.pdf,.jpg,.jpeg,.png,.mp4",
+    hint: "Deliverable: YouTube link, SupaStorage link, or video file"
+  },
+  "Post-Release Performance Report": {
+    label: "Upload Performance Report",
+    accept: ".pdf,.xlsx,.xls,.csv,.doc,.docx",
+    hint: "Required: report with streaming and performance stats"
+  },
+};
+
 const STATUS_CONFIG = {
   pending:   { label: "Not Started",       color: "bg-slate-100 text-slate-500",  dot: "bg-slate-300" },
   submitted: { label: "Pending Approval",  color: "bg-amber-100 text-amber-700",  dot: "bg-amber-400" },
@@ -305,6 +413,11 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                               (item as any).assignee_role && <span className="text-slate-500">👤 {(item as any).assignee_role}</span>
                             )}
                             {(item as any).approver_role && <span className="text-slate-500">✅ Approver: {(item as any).approver_role}</span>}
+                            {hasDeliverable ? (
+                              <span className="text-indigo-600">📎 Deliverable required</span>
+                            ) : (
+                              <span className="text-green-600">☑️ Checkbox only (no file)</span>
+                            )}
                             {dueDateLabel(dueOffset)}
                             {(completion?.file_names?.length ?? 0) > 0 && (
                               <span className="text-blue-600">📎 {completion!.file_names.length} file{completion!.file_names.length > 1 ? "s" : ""}</span>
@@ -396,8 +509,13 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                           {/* Submit form */}
                           {canSubmit && status !== "approved" && !isRejecting && hasDeliverable && (
                             <div className="space-y-2 pt-2 border-t">
-                              <FileUpload artistId={artistId} onUploaded={(url, name) =>
-                                setUploadedFiles((f) => [...f, { url, name }])} />
+                              <FileUpload
+                                artistId={artistId}
+                                label={DELIVERABLE_SPEC[item.item_name]?.label ?? "Upload Deliverable"}
+                                accept={DELIVERABLE_SPEC[item.item_name]?.accept}
+                                hint={DELIVERABLE_SPEC[item.item_name]?.hint ?? "Upload the required deliverable for this checklist item"}
+                                onUploaded={(url, name) => setUploadedFiles((f) => [...f, { url, name }])}
+                              />
                               {uploadedFiles.length > 0 && (
                                 <div className="flex flex-wrap gap-1">
                                   {uploadedFiles.map((f, i) => (
