@@ -6,6 +6,7 @@ import { DashboardPage } from "./pages/dashboard-page";
 import { ArtistsPage } from "./pages/artists-page";
 import { TasksPage } from "./pages/tasks-page";
 import { FinancePage } from "./pages/finance-page";
+import { TeamPage } from "./pages/team-page";
 import { LoginPage } from "./pages/login-page";
 import { useAuthStore } from "./context/auth-store";
 import "./styles.css";
@@ -19,7 +20,8 @@ const router = createBrowserRouter([
       { index: true, element: <DashboardPage /> },
       { path: "artists", element: <ArtistsPage /> },
       { path: "tasks", element: <TasksPage /> },
-      { path: "finance", element: <FinancePage /> }
+      { path: "finance", element: <FinancePage /> },
+      { path: "team", element: <TeamPage /> },
     ]
   }
 ]);
