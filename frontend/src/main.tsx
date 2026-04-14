@@ -7,6 +7,7 @@ import { ArtistsPage } from "./pages/artists-page";
 import { TasksPage } from "./pages/tasks-page";
 import { FinancePage } from "./pages/finance-page";
 import { TeamPage } from "./pages/team-page";
+import { ArtistDetailPage } from "./pages/artist-detail-page";
 import { LoginPage } from "./pages/login-page";
 import { useAuthStore } from "./context/auth-store";
 import "./styles.css";
@@ -22,6 +23,7 @@ const router = createBrowserRouter([
       { path: "tasks", element: <TasksPage /> },
       { path: "finance", element: <FinancePage /> },
       { path: "team", element: <TeamPage /> },
+      { path: "artists/:id", element: <ArtistDetailPage /> },
     ]
   }
 ]);

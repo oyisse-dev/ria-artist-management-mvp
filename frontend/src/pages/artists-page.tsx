@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { fetchArtists, createArtist, updateArtist, deleteArtist } from "../lib/api";
 import { useAuthStore } from "../context/auth-store";
 
@@ -23,6 +24,7 @@ export function ArtistsPage() {
   const isAdmin = user?.role === "admin";
   const canWrite = user?.role === "admin" || user?.role === "manager";
 
+  const navigate = useNavigate();
   const [artists, setArtists] = useState<Artist[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -129,7 +131,7 @@ export function ArtistsPage() {
                 <tr><td colSpan={7} className="px-4 py-6 text-center text-slate-400">No artists yet. Add your first artist!</td></tr>
               )}
               {artists.map((a) => (
-                <tr key={a.artistId} className="hover:bg-slate-50">
+                <tr key={a.artistId} className="hover:bg-slate-50 cursor-pointer" onClick={() => navigate(`/artists/${a.artistId}`)}>
                   <td className="px-4 py-3 font-medium">{a.stageName}</td>
                   <td className="px-4 py-3 text-slate-600">{a.legalName ?? "—"}</td>
                   <td className="px-4 py-3 text-slate-600">{a.contactEmail ?? "—"}</td>
@@ -145,10 +147,10 @@ export function ArtistsPage() {
                   {canWrite && (
                     <td className="px-4 py-3">
                       <div className="flex gap-2">
-                        <button onClick={() => openEdit(a)}
+                        <button onClick={(e) => { e.stopPropagation(); openEdit(a); }}
                           className="rounded px-2 py-1 text-xs text-blue-600 hover:bg-blue-50">Edit</button>
                         {isAdmin && (
-                          <button onClick={() => handleDelete(a.artistId)}
+                          <button onClick={(e) => { e.stopPropagation(); handleDelete(a.artistId); }}
                             className="rounded px-2 py-1 text-xs text-red-600 hover:bg-red-50">Delete</button>
                         )}
                       </div>
