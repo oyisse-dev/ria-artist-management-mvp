@@ -131,7 +131,7 @@ export function ProjectDetailPage() {
   const completedCount = checklist.filter((i) => i.checklist_completions?.[0]?.approval_status === "approved").length;
   const pendingApproval = checklist.filter((i) => i.checklist_completions?.[0]?.approval_status === "submitted").length;
 
-  const txSummary = transactions.reduce((acc, tx: any) => {
+  const txSummary = transactions.reduce((acc: { income: number; expense: number }, tx: any) => {
     if (tx.type === "income") acc.income += Number(tx.amount);
     else acc.expense += Number(tx.amount);
     return acc;
@@ -244,7 +244,7 @@ export function ProjectDetailPage() {
                       {item.required && <span className="text-red-500">Required</span>}
                       {item.users?.full_name && <span>→ {item.users.full_name}</span>}
                       {item.due_date && <span>📅 {item.due_date}</span>}
-                      {completion?.file_names?.length > 0 && <span>📎 {completion.file_names.length} file{completion.file_names.length > 1 ? "s" : ""}</span>}
+                      {(completion?.file_names?.length ?? 0) > 0 && <span>📎 {completion!.file_names.length} file{completion!.file_names.length > 1 ? "s" : ""}</span>}
                     </div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -272,12 +272,12 @@ export function ProjectDetailPage() {
                     {item.description && <p className="text-sm text-slate-600">{item.description}</p>}
 
                     {/* Existing files */}
-                    {completion?.file_names?.length > 0 && (
+                    {(completion?.file_names?.length ?? 0) > 0 && (
                       <div>
                         <p className="text-xs font-medium text-slate-600 mb-1">Uploaded Files:</p>
                         <div className="flex flex-wrap gap-2">
-                          {completion.file_names.map((name, i) => (
-                            <a key={i} href={completion.file_urls[i]} target="_blank" rel="noopener noreferrer"
+                          {completion!.file_names.map((name, i) => (
+                            <a key={i} href={completion!.file_urls[i]} target="_blank" rel="noopener noreferrer"
                               className="flex items-center gap-1 rounded-lg border bg-white px-3 py-1 text-xs text-blue-600 hover:bg-blue-50">
                               📎 {name}
                             </a>
