@@ -2,8 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabase";
 import {
-  fetchProject, fetchProjectChecklist, updateProject, updateChecklistItem,
-  submitChecklistCompletion, approveChecklistItem, fetchAuditLog,
+  fetchProject, fetchProjectChecklist, updateProject, fetchAuditLog,
   type Project, type ChecklistItem, type ProjectStatus,
   STATUS_LABELS, STATUS_COLORS, calcProgress,
 } from "../lib/projects-api";
@@ -30,17 +29,15 @@ export function ProjectDetailPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<Tab>("checklist");
 
-  // Checklist interaction
-  const [expandedItem, setExpandedItem] = useState<string | null>(null);
-  const [submitForm, setSubmitForm] = useState<{ notes: string }>({ notes: "" });
-  const [submittingId, setSubmittingId] = useState<string | null>(null);
-  const [rejectReason, setRejectReason] = useState("");
-  const [rejectingId, setRejectingId] = useState<string | null>(null);
-  const [uploadedFiles, setUploadedFiles] = useState<{ url: string; name: string }[]>([]);
-
   // Transaction modal
   const [showTxModal, setShowTxModal] = useState(false);
-  const [txForm, setTxForm] = useState({ type: "expense" as "income" | "expense", amount: "", date: new Date().toISOString().slice(0, 10), category: "", notes: "" });
+  const [txForm, setTxForm] = useState({
+    type: "expense" as "income" | "expense",
+    amount: "",
+    date: new Date().toISOString().slice(0, 10),
+    category: "",
+    notes: "",
+  });
   const [savingTx, setSavingTx] = useState(false);
 
   const load = async () => {
@@ -73,38 +70,12 @@ export function ProjectDetailPage() {
     const cl = await fetchProjectChecklist(id);
     setChecklist(cl);
 
-    // Also refresh transactions and audit so Assets/Finance/Audit tabs update immediately
     const [tx, al] = await Promise.all([
       supabase.from("transactions").select("*").eq("project_id", id).order("date", { ascending: false }),
       fetchAuditLog("projects", id),
     ]);
     setTransactions(tx.data ?? []);
     setAuditLog(al);
-  };
-
-  const handleSubmit = async (item: ChecklistItem) => {
-    const completion = item.checklist_completions?.[0];
-    setSubmittingId(item.id);
-    await submitChecklistCompletion(item.id, {
-      notes: submitForm.notes,
-      fileUrls: uploadedFiles.map((f) => f.url),
-      fileNames: uploadedFiles.map((f) => f.name),
-    });
-    setSubmittingId(null);
-    setExpandedItem(null);
-    setSubmitForm({ notes: "" });
-    setUploadedFiles([]);
-    await refreshChecklist();
-  };
-
-  const handleApprove = async (item: ChecklistItem, approved: boolean) => {
-    const completion = item.checklist_completions?.[0];
-    if (!completion) return;
-    if (!approved && !rejectReason) { setRejectingId(item.id); return; }
-    await approveChecklistItem(completion.id, approved, rejectReason);
-    setRejectingId(null);
-    setRejectReason("");
-    await refreshChecklist();
   };
 
   const handleTxCreate = async () => {
@@ -119,7 +90,9 @@ export function ProjectDetailPage() {
       await supabase.from("transactions").insert({
         artist_id: project.artist_id,
         project_id: id,
-        type: txForm.type, amount, date: txForm.date,
+        type: txForm.type,
+        amount,
+        date: txForm.date,
         category: txForm.category || null,
         notes: txForm.notes || null,
         description: txForm.notes || null,
@@ -128,7 +101,13 @@ export function ProjectDetailPage() {
         created_by: u?.id,
       });
       setShowTxModal(false);
-      setTxForm({ type: "expense", amount: "", date: new Date().toISOString().slice(0, 10), category: "", notes: "" });
+      setTxForm({
+        type: "expense",
+        amount: "",
+        date: new Date().toISOString().slice(0, 10),
+        category: "",
+        notes: "",
+      });
       const tx = await supabase.from("transactions").select("*").eq("project_id", id).order("date", { ascending: false });
       setTransactions(tx.data ?? []);
     } finally {
@@ -176,20 +155,26 @@ export function ProjectDetailPage() {
             {STATUS_LABELS[project.status]}
           </span>
           {canWrite && (
-            <select value={project.status} onChange={async (e) => {
-              const updated = await updateProject(project.id, { status: e.target.value as ProjectStatus });
-              setProject(updated);
-            }} className="rounded-lg border px-2 py-1 text-xs focus:outline-none">
-              {Object.entries(STATUS_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+            <select
+              value={project.status}
+              onChange={async (e) => {
+                const updated = await updateProject(project.id, { status: e.target.value as ProjectStatus });
+                setProject(updated);
+              }}
+              className="rounded-lg border px-2 py-1 text-xs focus:outline-none"
+            >
+              {Object.entries(STATUS_LABELS).map(([k, v]) => (
+                <option key={k} value={k}>{v}</option>
+              ))}
             </select>
           )}
         </div>
       </div>
 
-      {/* Progress bar + stats */}
+      {/* Progress */}
       <div className="grid gap-3 sm:grid-cols-4">
         <div className="col-span-2 rounded-xl border bg-white p-4">
-          <div className="flex items-center justify-between mb-2">
+          <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-medium">Progress</p>
             <p className="text-sm font-bold">{progress}%</p>
           </div>
@@ -201,7 +186,9 @@ export function ProjectDetailPage() {
         <div className="rounded-xl border bg-white p-4">
           <p className="text-xs text-slate-500">Target Date</p>
           <p className="mt-1 font-semibold">{project.target_date ?? "—"}</p>
-          {project.budget_estimate && <p className="mt-1 text-xs text-slate-500">Budget: UGX {Number(project.budget_estimate).toLocaleString()}</p>}
+          {project.budget_estimate && (
+            <p className="mt-1 text-xs text-slate-500">Budget: UGX {Number(project.budget_estimate).toLocaleString()}</p>
+          )}
         </div>
         <div className="rounded-xl border bg-white p-4">
           <p className="text-xs text-slate-500">Pending Approval</p>
@@ -211,16 +198,20 @@ export function ProjectDetailPage() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 border-b overflow-x-auto">
+      <div className="flex gap-1 overflow-x-auto border-b">
         {tabs.map((t) => (
-          <button key={t.key} onClick={() => setTab(t.key)}
-            className={`whitespace-nowrap px-4 py-2 text-sm font-medium transition border-b-2 -mb-px ${
+          <button
+            key={t.key}
+            onClick={() => setTab(t.key)}
+            className={`-mb-px whitespace-nowrap border-b-2 px-4 py-2 text-sm font-medium transition ${
               tab === t.key ? "border-slate-900 text-slate-900" : "border-transparent text-slate-500 hover:text-slate-700"
-            }`}>{t.label}</button>
+            }`}
+          >
+            {t.label}
+          </button>
         ))}
       </div>
 
-      {/* CHECKLIST TAB */}
       {tab === "checklist" && (
         <ReleaseChecklist
           checklist={checklist}
@@ -235,54 +226,10 @@ export function ProjectDetailPage() {
         />
       )}
 
-
-
-      {/* ASSETS TAB */}
       {tab === "assets" && (
-        <div className="space-y-4">
-          <div className="rounded-xl border bg-white p-5">
-            <h3 className="mb-3 font-semibold">Upload Asset</h3>
-            <FileUpload artistId={project.artist_id} onUploaded={(url, name) => {
-              // Show uploaded asset
-              setUploadedFiles((f) => [...f, { url, name }]);
-            }} />
-          </div>
-          {/* Show all files from checklist completions */}
-          <div>
-            <h3 className="mb-3 font-semibold text-slate-700">All Project Assets</h3>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {checklist.flatMap((item) =>
-                (item.checklist_completions?.[0]?.file_names ?? []).map((name, i) => ({
-                  name,
-                  url: item.checklist_completions![0].file_urls[i],
-                  item: item.item_name,
-                }))
-              ).map((asset, i) => (
-                <a key={i} href={asset.url} target="_blank" rel="noopener noreferrer"
-                  className="flex items-start gap-3 rounded-xl border bg-white p-3 hover:bg-slate-50 transition">
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xl">
-                    {asset.name.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? "🖼️" :
-                     asset.name.match(/\.(mp3|wav|flac|aac)$/i) ? "🎵" :
-                     asset.name.match(/\.(mp4|mov|avi)$/i) ? "🎬" :
-                     asset.name.match(/\.pdf$/i) ? "📄" : "📎"}
-                  </div>
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium truncate">{asset.name}</p>
-                    <p className="text-xs text-slate-400 truncate">{asset.item}</p>
-                  </div>
-                </a>
-              ))}
-              {checklist.every((i) => !i.checklist_completions?.[0]?.file_names?.length) && (
-                <div className="col-span-3 rounded-xl border border-dashed p-8 text-center text-sm text-slate-400">
-                  No assets uploaded yet. Submit checklist items with files to see them here.
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
+        <ProjectAssetsTab projectId={project.id} artistId={project.artist_id} />
       )}
 
-      {/* FINANCE TAB */}
       {tab === "finance" && (
         <div className="space-y-4">
           <div className="grid grid-cols-3 gap-3">
@@ -303,8 +250,7 @@ export function ProjectDetailPage() {
           </div>
           {canWrite && (
             <div className="flex justify-end">
-              <button onClick={() => setShowTxModal(true)}
-                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
+              <button onClick={() => setShowTxModal(true)} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
                 + Log Transaction
               </button>
             </div>
@@ -325,7 +271,7 @@ export function ProjectDetailPage() {
                     <td className="px-4 py-3"><span className={`rounded px-2 py-0.5 text-xs font-medium ${tx.type === "income" ? "bg-green-100 text-green-700" : "bg-red-100 text-red-700"}`}>{tx.type}</span></td>
                     <td className="px-4 py-3 text-slate-600">{tx.category ?? "—"}</td>
                     <td className="px-4 py-3 font-medium">UGX {Number(tx.amount).toLocaleString()}</td>
-                    <td className="px-4 py-3 text-slate-500 truncate max-w-xs">{tx.notes ?? "—"}</td>
+                    <td className="px-4 py-3 max-w-xs truncate text-slate-500">{tx.notes ?? "—"}</td>
                   </tr>
                 ))}
               </tbody>
@@ -334,7 +280,6 @@ export function ProjectDetailPage() {
         </div>
       )}
 
-      {/* TEAM TAB */}
       {tab === "team" && (
         <div className="space-y-3">
           {assignments.length === 0 && (
@@ -359,7 +304,6 @@ export function ProjectDetailPage() {
         </div>
       )}
 
-      {/* AUDIT TAB */}
       {tab === "audit" && (
         <div className="overflow-hidden rounded-xl border bg-white">
           <table className="min-w-full text-sm">
@@ -373,7 +317,7 @@ export function ProjectDetailPage() {
               {auditLog.length === 0 && <tr><td colSpan={4} className="px-4 py-8 text-center text-slate-400">No audit history yet.</td></tr>}
               {auditLog.map((log: any) => (
                 <tr key={log.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{new Date(log.changed_at).toLocaleString()}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-xs text-slate-500">{new Date(log.changed_at).toLocaleString()}</td>
                   <td className="px-4 py-3 text-slate-700">{log.users?.full_name ?? "System"}</td>
                   <td className="px-4 py-3">
                     <span className={`rounded px-2 py-0.5 text-xs font-medium ${
@@ -381,10 +325,10 @@ export function ProjectDetailPage() {
                       log.action === "UPDATE" ? "bg-blue-100 text-blue-700" : "bg-red-100 text-red-700"
                     }`}>{log.action}</span>
                   </td>
-                  <td className="px-4 py-3 text-xs text-slate-500 max-w-xs truncate">
+                  <td className="max-w-xs truncate px-4 py-3 text-xs text-slate-500">
                     {log.action === "UPDATE" && log.new_data
                       ? `Updated: ${Object.keys(log.new_data).filter(k => log.old_data?.[k] !== log.new_data?.[k] && k !== "updated_at").join(", ")}`
-                      : log.action === "INSERT" ? `Created "${log.new_data?.title ?? log.new_data?.item_name ?? "record"}"` : "Deleted"}
+                      : log.action === "INSERT" ? `Created \"${log.new_data?.title ?? log.new_data?.item_name ?? "record"}\"` : "Deleted"}
                   </td>
                 </tr>
               ))}
@@ -401,8 +345,17 @@ export function ProjectDetailPage() {
             <div className="space-y-3">
               <div className="flex gap-2">
                 {(["income", "expense"] as const).map((t) => (
-                  <button key={t} onClick={() => setTxForm({ ...txForm, type: t })}
-                    className={`flex-1 rounded-lg border py-2 text-sm font-medium capitalize ${txForm.type === t ? (t === "income" ? "border-green-500 bg-green-50 text-green-700" : "border-red-500 bg-red-50 text-red-700") : "text-slate-500 hover:bg-slate-50"}`}>
+                  <button
+                    key={t}
+                    onClick={() => setTxForm({ ...txForm, type: t })}
+                    className={`flex-1 rounded-lg border py-2 text-sm font-medium capitalize ${
+                      txForm.type === t
+                        ? t === "income"
+                          ? "border-green-500 bg-green-50 text-green-700"
+                          : "border-red-500 bg-red-50 text-red-700"
+                        : "text-slate-500 hover:bg-slate-50"
+                    }`}
+                  >
                     {t}
                   </button>
                 ))}
@@ -442,5 +395,73 @@ export function ProjectDetailPage() {
         </div>
       )}
     </section>
+  );
+}
+
+function ProjectAssetsTab({ projectId, artistId }: { projectId: string; artistId: string }) {
+  const [assets, setAssets] = useState<Array<{ name: string; url: string; item: string }>>([]);
+
+  const loadAssets = async () => {
+    const { data, error } = await supabase
+      .from("project_checklists")
+      .select("item_name, checklist_completions(file_names, file_urls)")
+      .eq("project_id", projectId);
+
+    if (error) {
+      console.error("Load assets error:", error.message);
+      setAssets([]);
+      return;
+    }
+
+    const mapped: Array<{ name: string; url: string; item: string }> = [];
+    for (const row of (data ?? []) as any[]) {
+      const completion = row.checklist_completions?.[0];
+      const names = completion?.file_names ?? [];
+      const urls = completion?.file_urls ?? [];
+      for (let i = 0; i < names.length; i++) {
+        if (urls[i]) {
+          mapped.push({ name: names[i], url: urls[i], item: row.item_name });
+        }
+      }
+    }
+    setAssets(mapped);
+  };
+
+  useEffect(() => { loadAssets(); }, [projectId]);
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-xl border bg-white p-5">
+        <h3 className="mb-3 font-semibold">Upload Asset</h3>
+        <FileUpload artistId={artistId} onUploaded={async () => {
+          await loadAssets();
+        }} />
+      </div>
+      <div>
+        <h3 className="mb-3 font-semibold text-slate-700">All Project Assets</h3>
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {assets.map((asset, i) => (
+            <a key={i} href={asset.url} target="_blank" rel="noopener noreferrer"
+              className="flex items-start gap-3 rounded-xl border bg-white p-3 transition hover:bg-slate-50">
+              <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-slate-100 text-xl">
+                {asset.name.match(/\.(jpg|jpeg|png|gif|webp)$/i) ? "🖼️" :
+                  asset.name.match(/\.(mp3|wav|flac|aac)$/i) ? "🎵" :
+                    asset.name.match(/\.(mp4|mov|avi)$/i) ? "🎬" :
+                      asset.name.match(/\.pdf$/i) ? "📄" : "📎"}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{asset.name}</p>
+                <p className="truncate text-xs text-slate-400">{asset.item}</p>
+              </div>
+            </a>
+          ))}
+          {assets.length === 0 && (
+            <div className="col-span-3 rounded-xl border border-dashed p-8 text-center text-sm text-slate-400">
+              No assets uploaded yet. Submit checklist items with files to see them here.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   );
 }
