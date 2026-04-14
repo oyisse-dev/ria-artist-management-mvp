@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git init)",
+      "Bash(git branch *)",
+      "Bash(which *)",
+      "Bash(python3 *)",
+      "Bash(pip3 install *)",
+      "Bash(source *)",
+      "Bash(pip install *)",
+      "Bash(git remote *)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
+    ]
+  },
+  "$version": 3
+}
