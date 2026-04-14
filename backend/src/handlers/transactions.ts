@@ -1,86 +1,78 @@
-import { PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { v4 as uuid } from "uuid";
-import { DEFAULT_COMMISSION_RATE, TABLE_NAME } from "../lib/config.js";
-import { ddb } from "../lib/db.js";
-import { keys } from "../lib/keys.js";
+import { supabase } from "../lib/db.js";
+import { DEFAULT_COMMISSION_RATE } from "../lib/config.js";
+import type { TransactionItem } from "../lib/types.js";
 import { getArtist } from "./artists.js";
 
-export async function listArtistTransactions(artistId: string) {
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: TABLE_NAME,
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :txPrefix)",
-      ExpressionAttributeValues: {
-        ":pk": keys.artistPk(artistId),
-        ":txPrefix": "TRANSACTION#"
-      }
-    })
-  );
-  return (result.Items ?? []).map(mapTransaction);
+export async function listArtistTransactions(artistId: string): Promise<TransactionItem[]> {
+  const { data, error } = await supabase
+    .from("transactions")
+    .select("*")
+    .eq("artist_id", artistId)
+    .order("date", { ascending: false });
+
+  if (error) throw error;
+  return (data ?? []).map(mapTransaction);
 }
 
-export async function createTransaction(body: Record<string, unknown>, userId: string) {
-  const transactionId = uuid();
+export async function createTransaction(body: Record<string, unknown>, userId: string): Promise<TransactionItem> {
   const artistId = String(body.artistId ?? "");
   const amount = Number(body.amount ?? 0);
   const type = String(body.type ?? "expense") as "income" | "expense";
   const date = String(body.date ?? new Date().toISOString().slice(0, 10));
-  const now = new Date().toISOString();
 
+  // Calculate commission
   const artist = await getArtist(artistId);
   const commissionRate = artist?.commissionRate ?? DEFAULT_COMMISSION_RATE;
   const commissionAmount = type === "income" ? (amount * commissionRate) / 100 : 0;
   const artistNetAmount = type === "income" ? amount - commissionAmount : 0;
 
-  const item = {
-    PK: keys.artistPk(artistId),
-    SK: keys.transactionSk(transactionId),
-    entityType: "TRANSACTION",
-    transactionId,
-    artistId,
-    amount,
-    type,
-    date,
-    category: body.category ? String(body.category) : undefined,
-    notes: body.notes ? String(body.notes) : undefined,
-    commissionAmount,
-    artistNetAmount,
-    createdBy: userId,
-    createdAt: now,
-    GSI3PK: keys.gsi3TxPk,
-    GSI3SK: keys.gsi3TxSk(date, transactionId)
-  };
-
-  await ddb.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
-  return mapTransaction(item);
-}
-
-export async function recentTransactions(limit = 20) {
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: TABLE_NAME,
-      IndexName: "GSI3",
-      KeyConditionExpression: "GSI3PK = :pk",
-      ExpressionAttributeValues: { ":pk": keys.gsi3TxPk },
-      ScanIndexForward: false,
-      Limit: limit
+  const { data, error } = await supabase
+    .from("transactions")
+    .insert({
+      artist_id: artistId,
+      amount,
+      type,
+      date,
+      category: body.category ? String(body.category) : null,
+      description: body.description ?? (body.notes ? String(body.notes) : null),
+      notes: body.notes ? String(body.notes) : null,
+      receipt_url: body.receiptUrl ? String(body.receiptUrl) : null,
+      commission_amount: commissionAmount,
+      artist_net_amount: artistNetAmount,
+      created_by: userId
     })
-  );
-  return (result.Items ?? []).map(mapTransaction);
+    .select()
+    .single();
+
+  if (error) throw error;
+  return mapTransaction(data);
 }
 
-function mapTransaction(item: Record<string, unknown>) {
+export async function recentTransactions(limit = 20): Promise<TransactionItem[]> {
+  const { data, error } = await supabase
+    .from("transactions")
+    .select("*")
+    .order("date", { ascending: false })
+    .limit(limit);
+
+  if (error) throw error;
+  return (data ?? []).map(mapTransaction);
+}
+
+function mapTransaction(row: Record<string, unknown>): TransactionItem {
   return {
-    transactionId: String(item.transactionId),
-    artistId: String(item.artistId),
-    amount: Number(item.amount ?? 0),
-    date: String(item.date ?? ""),
-    type: String(item.type ?? "expense"),
-    category: item.category ? String(item.category) : undefined,
-    notes: item.notes ? String(item.notes) : undefined,
-    commissionAmount: Number(item.commissionAmount ?? 0),
-    artistNetAmount: Number(item.artistNetAmount ?? 0),
-    createdBy: String(item.createdBy ?? ""),
-    createdAt: String(item.createdAt ?? "")
+    transactionId: String(row.id),
+    artistId: String(row.artist_id),
+    amount: Number(row.amount ?? 0),
+    date: String(row.date ?? ""),
+    type: String(row.type ?? "expense") as "income" | "expense",
+    category: row.category ? String(row.category) : undefined,
+    notes: row.notes ? String(row.notes) : (row.description ? String(row.description) : undefined),
+    description: row.description ? String(row.description) : undefined,
+    receiptUrl: row.receipt_url ? String(row.receipt_url) : undefined,
+    commissionAmount: Number(row.commission_amount ?? 0),
+    artistNetAmount: Number(row.artist_net_amount ?? 0),
+    createdBy: String(row.created_by ?? ""),
+    createdAt: String(row.created_at ?? "")
   };
 }

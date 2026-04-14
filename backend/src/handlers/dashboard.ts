@@ -1,21 +1,15 @@
-import { QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { TABLE_NAME } from "../lib/config.js";
-import { ddb } from "../lib/db.js";
-import { keys } from "../lib/keys.js";
+import { supabase } from "../lib/db.js";
 import { recentTransactions } from "./transactions.js";
 
 export async function getDashboardSummary() {
-  const openTasksResult = await ddb.send(
-    new QueryCommand({
-      TableName: TABLE_NAME,
-      IndexName: "GSI2",
-      KeyConditionExpression: "GSI2PK = :pk",
-      ExpressionAttributeValues: { ":pk": keys.gsi2TaskPk }
-    })
-  );
+  // Pending tasks count
+  const { count: pendingTasks } = await supabase
+    .from("tasks")
+    .select("*", { count: "exact", head: true })
+    .eq("completed", false);
 
+  // Recent transactions for financial summary
   const recentTx = await recentTransactions(50);
-  const pendingTasks = (openTasksResult.Items ?? []).filter((item) => item.completed !== true).length;
   const totalIncome = recentTx
     .filter((tx) => tx.type === "income")
     .reduce((sum, tx) => sum + tx.amount, 0);
@@ -23,8 +17,14 @@ export async function getDashboardSummary() {
     .filter((tx) => tx.type === "expense")
     .reduce((sum, tx) => sum + tx.amount, 0);
 
+  // Total artists
+  const { count: totalArtists } = await supabase
+    .from("artists")
+    .select("*", { count: "exact", head: true });
+
   return {
-    pendingTasks,
+    pendingTasks: pendingTasks ?? 0,
+    totalArtists: totalArtists ?? 0,
     totalIncome,
     totalExpense,
     net: totalIncome - totalExpense,

@@ -1,25 +1,39 @@
-import type { APIGatewayProxyEvent } from "aws-lambda";
+import { createClient } from "@supabase/supabase-js";
+import { SUPABASE_URL, SUPABASE_SERVICE_KEY } from "./config.js";
 import type { AuthUser, Role } from "./types.js";
 
-function normalizeRole(group: string): Role | null {
-  if (group === "Admin" || group === "Manager" || group === "Finance") return group;
-  return null;
-}
+const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+  auth: { persistSession: false }
+});
 
-export function getAuthUser(event: APIGatewayProxyEvent): AuthUser {
-  const claims = (event.requestContext.authorizer?.claims as Record<string, string> | undefined) ?? {};
-  const sub = claims.sub ?? "unknown-user";
-  const groupsRaw = claims["cognito:groups"] ?? "";
-  const roles = groupsRaw
-    .split(",")
-    .map((x) => normalizeRole(x.trim()))
-    .filter((x): x is Role => Boolean(x));
+export async function getAuthUser(authHeader: string | undefined): Promise<AuthUser> {
+  if (!authHeader?.startsWith("Bearer ")) {
+    throw Object.assign(new Error("Unauthorized"), { statusCode: 401 });
+  }
+
+  const token = authHeader.slice(7);
+
+  // Verify the JWT and get the user
+  const { data: { user }, error } = await supabaseAdmin.auth.getUser(token);
+  if (error || !user) {
+    throw Object.assign(new Error("Unauthorized"), { statusCode: 401 });
+  }
+
+  // Get user's role from public.users table
+  const { data: profile } = await supabaseAdmin
+    .from("users")
+    .select("role, full_name")
+    .eq("id", user.id)
+    .single();
+
+  const role = (profile?.role as Role) ?? "Manager";
 
   return {
-    id: sub,
-    email: claims.email,
-    name: claims.name,
-    roles
+    id: user.id,
+    email: user.email,
+    name: profile?.full_name ?? user.email,
+    role,
+    roles: [role]
   };
 }
 

@@ -1,7 +1,6 @@
 import type { APIGatewayProxyResult } from "aws-lambda";
 
-const baseHeaders = {
-  "Content-Type": "application/json",
+const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "Content-Type,Authorization",
   "Access-Control-Allow-Methods": "GET,POST,PUT,PATCH,DELETE,OPTIONS"
@@ -10,11 +9,11 @@ const baseHeaders = {
 export function response(statusCode: number, body: unknown): APIGatewayProxyResult {
   return {
     statusCode,
-    headers: baseHeaders,
+    headers: { "Content-Type": "application/json", ...CORS_HEADERS },
     body: JSON.stringify(body)
   };
 }
 
 export function noContent(): APIGatewayProxyResult {
-  return { statusCode: 204, headers: baseHeaders, body: "" };
+  return { statusCode: 204, headers: CORS_HEADERS, body: "" };
 }

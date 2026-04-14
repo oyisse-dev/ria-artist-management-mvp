@@ -1,137 +1,82 @@
-import { GetCommand, PutCommand, QueryCommand } from "@aws-sdk/lib-dynamodb";
-import { v4 as uuid } from "uuid";
-import { TABLE_NAME } from "../lib/config.js";
-import { ddb } from "../lib/db.js";
-import { keys } from "../lib/keys.js";
+import { supabase } from "../lib/db.js";
+import type { TaskItem } from "../lib/types.js";
 
-export async function listArtistTasks(artistId: string) {
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: TABLE_NAME,
-      KeyConditionExpression: "PK = :pk AND begins_with(SK, :taskPrefix)",
-      ExpressionAttributeValues: {
-        ":pk": keys.artistPk(artistId),
-        ":taskPrefix": "TASK#"
-      }
-    })
-  );
-  return (result.Items ?? []).map(mapTask);
+export async function listArtistTasks(artistId: string): Promise<TaskItem[]> {
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("*")
+    .eq("artist_id", artistId)
+    .order("due_date", { ascending: true, nullsFirst: false });
+
+  if (error) throw error;
+  return (data ?? []).map(mapTask);
 }
 
-export async function listMyTasks(userId: string) {
-  const result = await ddb.send(
-    new QueryCommand({
-      TableName: TABLE_NAME,
-      IndexName: "GSI1",
-      KeyConditionExpression: "GSI1PK = :pk",
-      ExpressionAttributeValues: { ":pk": keys.gsi1AssigneePk(userId) }
-    })
-  );
-  return (result.Items ?? []).map(mapTask);
+export async function listMyTasks(userId: string): Promise<TaskItem[]> {
+  const { data, error } = await supabase
+    .from("tasks")
+    .select("*")
+    .eq("assigned_to", userId)
+    .order("due_date", { ascending: true, nullsFirst: false });
+
+  if (error) throw error;
+  return (data ?? []).map(mapTask);
 }
 
-export async function createTask(body: Record<string, unknown>, userId: string) {
-  const taskId = uuid();
-  const artistId = String(body.artistId ?? "");
-  const now = new Date().toISOString();
-  const dueDate = body.dueDate ? String(body.dueDate) : undefined;
-  const assignedTo = body.assignedTo ? String(body.assignedTo) : undefined;
-
-  const item = {
-    PK: keys.artistPk(artistId),
-    SK: keys.taskSk(taskId),
-    entityType: "TASK",
-    taskId,
-    artistId,
-    title: String(body.title ?? ""),
-    dueDate,
-    completed: false,
-    assignedTo,
-    createdBy: userId,
-    createdAt: now,
-    updatedAt: now,
-    GSI1PK: assignedTo ? keys.gsi1AssigneePk(assignedTo) : undefined,
-    GSI1SK: keys.gsi1TaskSk(dueDate, taskId),
-    GSI2PK: keys.gsi2TaskPk,
-    GSI2SK: keys.gsi2TaskSk(dueDate, taskId)
-  };
-
-  await ddb.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
-  await ddb.send(
-    new PutCommand({
-      TableName: TABLE_NAME,
-      Item: {
-        PK: `TASK#${taskId}`,
-        SK: "METADATA",
-        entityType: "TASK_POINTER",
-        taskId,
-        artistId
-      }
+export async function createTask(body: Record<string, unknown>, userId: string): Promise<TaskItem> {
+  const { data, error } = await supabase
+    .from("tasks")
+    .insert({
+      artist_id: String(body.artistId ?? ""),
+      title: String(body.title ?? ""),
+      description: body.description ? String(body.description) : null,
+      due_date: body.dueDate ? String(body.dueDate) : null,
+      assigned_to: body.assignedTo ? String(body.assignedTo) : null,
+      completed: false,
+      created_by: userId
     })
-  );
-  return mapTask(item);
+    .select()
+    .single();
+
+  if (error) throw error;
+  return mapTask(data);
 }
 
-export async function updateTask(taskId: string, body: Record<string, unknown>) {
-  const task = await getTaskById(taskId);
-  if (!task) return null;
+export async function updateTask(taskId: string, body: Record<string, unknown>): Promise<TaskItem | null> {
+  const updates: Record<string, unknown> = {};
+  if (body.title !== undefined) updates.title = String(body.title);
+  if (body.description !== undefined) updates.description = String(body.description);
+  if (body.dueDate !== undefined) updates.due_date = String(body.dueDate);
+  if (body.assignedTo !== undefined) updates.assigned_to = String(body.assignedTo);
+  if (body.completed !== undefined) {
+    const completed = body.completed === true || body.completed === "true";
+    updates.completed = completed;
+    updates.completed_at = completed ? new Date().toISOString() : null;
+  }
 
-  const dueDate = body.dueDate ? String(body.dueDate) : task.dueDate;
-  const assignedTo = body.assignedTo ? String(body.assignedTo) : task.assignedTo;
-  const item = {
-    ...task.raw,
-    title: body.title ? String(body.title) : task.title,
-    dueDate,
-    assignedTo,
-    completed:
-      typeof body.completed === "boolean"
-        ? body.completed
-        : typeof body.completed === "string"
-          ? body.completed === "true"
-          : task.completed,
-    updatedAt: new Date().toISOString(),
-    GSI1PK: assignedTo ? keys.gsi1AssigneePk(assignedTo) : undefined,
-    GSI1SK: keys.gsi1TaskSk(dueDate, taskId),
-    GSI2PK: keys.gsi2TaskPk,
-    GSI2SK: keys.gsi2TaskSk(dueDate, taskId)
-  };
+  const { data, error } = await supabase
+    .from("tasks")
+    .update(updates)
+    .eq("id", taskId)
+    .select()
+    .single();
 
-  await ddb.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
-  return mapTask(item);
+  if (error) return null;
+  return data ? mapTask(data) : null;
 }
 
-async function getTaskById(taskId: string) {
-  const pointer = await ddb.send(
-    new GetCommand({
-      TableName: TABLE_NAME,
-      Key: { PK: `TASK#${taskId}`, SK: "METADATA" }
-    })
-  );
-  if (!pointer.Item?.artistId) return null;
-
-  const result = await ddb.send(
-    new GetCommand({
-      TableName: TABLE_NAME,
-      Key: {
-        PK: keys.artistPk(String(pointer.Item.artistId)),
-        SK: keys.taskSk(taskId)
-      }
-    })
-  );
-  if (!result.Item) return null;
-  return { ...mapTask(result.Item), raw: result.Item };
-}
-
-function mapTask(item: Record<string, unknown>) {
+function mapTask(row: Record<string, unknown>): TaskItem {
   return {
-    taskId: String(item.taskId),
-    artistId: String(item.artistId),
-    title: String(item.title),
-    dueDate: item.dueDate ? String(item.dueDate) : undefined,
-    completed: Boolean(item.completed),
-    assignedTo: item.assignedTo ? String(item.assignedTo) : undefined,
-    createdBy: String(item.createdBy ?? ""),
-    createdAt: String(item.createdAt ?? ""),
-    updatedAt: String(item.updatedAt ?? "")
+    taskId: String(row.id),
+    artistId: String(row.artist_id),
+    title: String(row.title),
+    description: row.description ? String(row.description) : undefined,
+    dueDate: row.due_date ? String(row.due_date) : undefined,
+    completed: Boolean(row.completed),
+    completedAt: row.completed_at ? String(row.completed_at) : undefined,
+    assignedTo: row.assigned_to ? String(row.assigned_to) : undefined,
+    createdBy: String(row.created_by ?? ""),
+    createdAt: String(row.created_at ?? ""),
+    updatedAt: String(row.updated_at ?? "")
   };
 }

@@ -1,8 +1,8 @@
-import { DynamoDBClient } from "@aws-sdk/client-dynamodb";
-import { DynamoDBDocumentClient } from "@aws-sdk/lib-dynamodb";
+import { createClient } from "@supabase/supabase-js";
+import { SUPABASE_URL, SUPABASE_SERVICE_KEY } from "./config.js";
 
-const client = new DynamoDBClient({});
-
-export const ddb = DynamoDBDocumentClient.from(client, {
-  marshallOptions: { removeUndefinedValues: true }
+// Service role client — bypasses RLS for backend operations
+// RLS is enforced at the API layer via role checks
+export const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+  auth: { persistSession: false }
 });

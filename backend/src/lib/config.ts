@@ -1,3 +1,3 @@
-export const TABLE_NAME = process.env.TABLE_NAME ?? "PyongRecords";
-export const BUCKET_NAME = process.env.BUCKET_NAME ?? "";
+export const SUPABASE_URL = process.env.SUPABASE_URL ?? "";
+export const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY ?? "";
 export const DEFAULT_COMMISSION_RATE = 20;
