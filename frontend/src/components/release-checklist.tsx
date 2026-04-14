@@ -188,58 +188,78 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
 
   const handleSubmit = async (item: ChecklistItem) => {
     setSubmittingId(item.id);
+    let submitOk = false;
     try {
-      const completion = await submitChecklistCompletion(item.id, {
+      await submitChecklistCompletion(item.id, {
         notes: submitNotes,
         fileUrls: uploadedFiles.map((f) => f.url),
         fileNames: uploadedFiles.map((f) => f.name),
       });
+      submitOk = true;
 
-      // Mirror checklist submission as task update/creation
-      const { data: existingTask } = await supabase
-        .from("tasks")
-        .select("id")
-        .eq("project_id", projectId)
-        .eq("title", item.item_name)
-        .single();
+      // Mirror checklist submission as task update/creation (non-blocking)
+      try {
+        const { data: existingTask } = await supabase
+          .from("tasks")
+          .select("id")
+          .eq("project_id", projectId)
+          .eq("title", item.item_name)
+          .maybeSingle();
 
-      const dueDate = dueDateFromOffset((item as any).due_offset_days, targetDate);
-      if (existingTask?.id) {
-        await supabase.from("tasks").update({
-          due_date: dueDate,
-          completed: false,
-          updated_at: new Date().toISOString(),
-        }).eq("id", existingTask.id);
-      } else {
-        const { data: currentUser } = await supabase.auth.getUser();
-        await supabase.from("tasks").insert({
-          project_id: projectId,
-          artist_id: artistId,
-          title: item.item_name,
-          description: item.description || null,
-          due_date: dueDate,
-          assigned_to: (item as any).assigned_to || null,
-          completed: false,
-          created_by: currentUser.user?.id,
-        });
+        const dueDate = dueDateFromOffset((item as any).due_offset_days, targetDate);
+        const assignedTo = (item as any).assigned_to || null;
+
+        if (existingTask?.id) {
+          await supabase.from("tasks").update({
+            due_date: dueDate,
+            assigned_to: assignedTo,
+            completed: false,
+            completed_at: null,
+          }).eq("id", existingTask.id);
+        } else {
+          const { data: currentUser } = await supabase.auth.getUser();
+          await supabase.from("tasks").insert({
+            project_id: projectId,
+            artist_id: artistId,
+            title: item.item_name,
+            description: item.description || null,
+            due_date: dueDate,
+            assigned_to: assignedTo,
+            completed: false,
+            created_by: currentUser.user?.id ?? null,
+          });
+        }
+      } catch (mirrorErr) {
+        console.error("Task mirror failed (submission still saved):", mirrorErr);
       }
 
       setExpandedItem(null);
       setSubmitNotes("");
       setUploadedFiles([]);
-      onRefresh();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Submission failed. Please try again.");
     } finally {
+      await onRefresh();
       setSubmittingId(null);
+      if (submitOk) {
+        // small UX cue
+        console.log("Checklist item submitted successfully");
+      }
     }
   };
 
   const handleMarkComplete = async (item: ChecklistItem) => {
-    // For items with no deliverable — just mark as submitted then auto-approve
+    // For items with no deliverable — mark submitted then auto-approve
     await submitChecklistCompletion(item.id, { notes: "Marked complete" });
-    const updated = await supabase.from("checklist_completions").select("id").eq("checklist_id", item.id).single();
-    if (updated.data?.id) await approveChecklistItem(updated.data.id, true);
+    const updated = await supabase
+      .from("checklist_completions")
+      .select("id")
+      .eq("checklist_id", item.id)
+      .maybeSingle();
+
+    if (updated.data?.id) {
+      await approveChecklistItem(updated.data.id, true);
+    }
 
     // Mirror checklist item as a completed task
     const { data: existingTask } = await supabase
@@ -247,16 +267,28 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
       .select("id")
       .eq("project_id", projectId)
       .eq("title", item.item_name)
-      .single();
+      .maybeSingle();
 
     if (existingTask?.id) {
       await supabase.from("tasks").update({
         completed: true,
         completed_at: new Date().toISOString(),
       }).eq("id", existingTask.id);
+    } else {
+      const dueDate = dueDateFromOffset((item as any).due_offset_days, targetDate);
+      const { data: currentUser } = await supabase.auth.getUser();
+      await supabase.from("tasks").insert({
+        project_id: projectId,
+        artist_id: artistId,
+        title: item.item_name,
+        due_date: dueDate,
+        completed: true,
+        completed_at: new Date().toISOString(),
+        created_by: currentUser.user?.id ?? null,
+      });
     }
 
-    onRefresh();
+    await onRefresh();
   };
 
   const handleAssignChecklistItem = async (item: ChecklistItem, userId: string) => {
@@ -268,7 +300,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
       .select("id")
       .eq("project_id", projectId)
       .eq("title", item.item_name)
-      .single();
+      .maybeSingle();
 
     if (existingTask?.id) {
       await supabase.from("tasks").update({
@@ -452,6 +484,9 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                               <span className="text-indigo-600">📎 Deliverable required</span>
                             ) : (
                               <span className="text-green-600">☑️ Checkbox only (no file)</span>
+                            )}
+                            {(completion?.file_names?.length ?? 0) > 0 && (
+                              <span className="text-emerald-600 font-medium">✅ File uploaded</span>
                             )}
                             {dueDateLabel(dueOffset)}
                             {(completion?.file_names?.length ?? 0) > 0 && (

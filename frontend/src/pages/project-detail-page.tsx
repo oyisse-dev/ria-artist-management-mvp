@@ -72,6 +72,14 @@ export function ProjectDetailPage() {
     if (!id) return;
     const cl = await fetchProjectChecklist(id);
     setChecklist(cl);
+
+    // Also refresh transactions and audit so Assets/Finance/Audit tabs update immediately
+    const [tx, al] = await Promise.all([
+      supabase.from("transactions").select("*").eq("project_id", id).order("date", { ascending: false }),
+      fetchAuditLog("projects", id),
+    ]);
+    setTransactions(tx.data ?? []);
+    setAuditLog(al);
   };
 
   const handleSubmit = async (item: ChecklistItem) => {
