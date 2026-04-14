@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { fetchDashboard } from "../lib/api";
+import { supabase } from "../lib/supabase";
 
 type DashData = {
   pendingTasks: number;
@@ -16,10 +16,31 @@ export function DashboardPage() {
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchDashboard()
-      .then(setData)
-      .catch(() => setError("Could not load dashboard. Check your API URL config."))
-      .finally(() => setLoading(false));
+    async function load() {
+      try {
+        const [{ count: totalArtists }, { count: pendingTasks }, { data: txData }] = await Promise.all([
+          supabase.from("artists").select("*", { count: "exact", head: true }),
+          supabase.from("tasks").select("*", { count: "exact", head: true }).eq("completed", false),
+          supabase.from("transactions").select("*").order("date", { ascending: false }).limit(50),
+        ]);
+        const txs = txData ?? [];
+        const totalIncome = txs.filter((t) => t.type === "income").reduce((s, t) => s + Number(t.amount), 0);
+        const totalExpense = txs.filter((t) => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
+        setData({
+          pendingTasks: pendingTasks ?? 0,
+          totalArtists: totalArtists ?? 0,
+          totalIncome,
+          totalExpense,
+          net: totalIncome - totalExpense,
+          recentTransactions: txs.slice(0, 10),
+        });
+      } catch {
+        setError("Could not load dashboard data.");
+      } finally {
+        setLoading(false);
+      }
+    }
+    load();
   }, []);
 
   if (loading) return <p className="text-sm text-slate-500">Loading dashboard…</p>;
