@@ -163,8 +163,14 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     return acc;
   }, {} as Record<string, ChecklistItem[]>);
 
+  const getCompletion = (item: ChecklistItem) => {
+    const c: any = (item as any).checklist_completions;
+    if (!c) return undefined;
+    return Array.isArray(c) ? c[0] : c;
+  };
+
   const getStatus = (item: ChecklistItem) =>
-    (item.checklist_completions?.[0]?.approval_status ?? "pending") as keyof typeof STATUS_CONFIG;
+    (getCompletion(item)?.approval_status ?? "pending") as keyof typeof STATUS_CONFIG;
 
   const filtered = (items: ChecklistItem[]) =>
     filter === "all" ? items : items.filter((i) => getStatus(i) === filter);
@@ -332,14 +338,14 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   };
 
   const handleApprove = async (item: ChecklistItem) => {
-    const completion = item.checklist_completions?.[0];
+    const completion = getCompletion(item);
     if (!completion) return;
     await approveChecklistItem(completion.id, true);
     onRefresh();
   };
 
   const handleReject = async (item: ChecklistItem) => {
-    const completion = item.checklist_completions?.[0];
+    const completion = getCompletion(item);
     if (!completion || !rejectReason) return;
     await approveChecklistItem(completion.id, false, rejectReason);
     setRejectingId(null);
@@ -445,7 +451,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
               <div className="divide-y border-t">
                 {(filter === "all" ? items : visibleItems).map((item) => {
                   const status = getStatus(item);
-                  const completion = item.checklist_completions?.[0];
+                  const completion = getCompletion(item);
                   const cfg = STATUS_CONFIG[status];
                   const isExpanded = expandedItem === item.id;
                   const isRejecting = rejectingId === item.id;
@@ -558,7 +564,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                             <div>
                               <p className="mb-1.5 text-xs font-medium text-slate-600">Uploaded Files</p>
                               <div className="flex flex-wrap gap-2">
-                                {completion!.file_names.map((name, i) => (
+                                {(completion!.file_names as string[]).map((name: string, i: number) => (
                                   <a key={i} href={completion!.file_urls[i]} target="_blank" rel="noopener noreferrer"
                                     className="flex items-center gap-1.5 rounded-lg border bg-slate-50 px-3 py-1.5 text-xs text-blue-600 hover:bg-blue-50">
                                     {name.match(/\.(mp3|wav|flac)$/i) ? "🎵" :
