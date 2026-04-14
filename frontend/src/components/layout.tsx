@@ -4,6 +4,7 @@ import { useAuthStore } from "../context/auth-store";
 const nav = [
   { to: "/", label: "Dashboard" },
   { to: "/artists", label: "Artists" },
+  { to: "/projects", label: "Projects" },
   { to: "/tasks", label: "Tasks" },
   { to: "/finance", label: "Finance" },
   { to: "/team", label: "Team", adminOnly: true },
