@@ -6,7 +6,7 @@ export async function listArtists(user: AuthUser): Promise<Artist[]> {
   let query = supabase.from("artists").select("*").order("stage_name");
 
   // Managers only see their assigned artists
-  if (user.role === "Manager") {
+  if (user.role === "manager") {
     const { data: assignments } = await supabase
       .from("artist_assignments")
       .select("artist_id")

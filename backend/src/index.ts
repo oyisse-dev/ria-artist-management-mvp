@@ -59,71 +59,71 @@ export async function handler(event: APIGatewayProxyEvent): Promise<APIGatewayPr
 // ---- Route handlers ----
 
 async function handleListArtists(_event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager", "Finance"]);
+  guard(user, ["admin", "manager", "finance"]);
   return response(200, { items: await listArtists(user) });
 }
 
 async function handleGetArtist(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager", "Finance"]);
+  guard(user, ["admin", "manager", "finance"]);
   const artistId = extract(event.path, /^\/artists\/([^/]+)$/);
   const artist = await getArtist(artistId);
   return artist ? response(200, artist) : response(404, { message: "Artist not found" });
 }
 
 async function handleCreateArtist(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager"]);
+  guard(user, ["admin", "manager"]);
   const body = parseBody(event.body);
   if (!body.stageName) return response(400, { message: "stageName is required" });
   return response(201, await createArtist(body, user.id));
 }
 
 async function handleUpdateArtist(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager"]);
+  guard(user, ["admin", "manager"]);
   const artistId = extract(event.path, /^\/artists\/([^/]+)$/);
   const updated = await updateArtist(artistId, parseBody(event.body));
   return updated ? response(200, updated) : response(404, { message: "Artist not found" });
 }
 
 async function handleDeleteArtist(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin"]);
+  guard(user, ["admin"]);
   const artistId = extract(event.path, /^\/artists\/([^/]+)$/);
   await deleteArtist(artistId);
   return noContent();
 }
 
 async function handleArtistTasks(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager", "Finance"]);
+  guard(user, ["admin", "manager", "finance"]);
   const artistId = extract(event.path, /^\/artists\/([^/]+)\/tasks$/);
   return response(200, { items: await listArtistTasks(artistId) });
 }
 
 async function handleMyTasks(_event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager", "Finance"]);
+  guard(user, ["admin", "manager", "finance"]);
   return response(200, { items: await listMyTasks(user.id) });
 }
 
 async function handleCreateTask(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager"]);
+  guard(user, ["admin", "manager"]);
   const body = parseBody(event.body);
   if (!body.artistId || !body.title) return response(400, { message: "artistId and title are required" });
   return response(201, await createTask(body, user.id));
 }
 
 async function handleUpdateTask(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager", "Finance"]);
+  guard(user, ["admin", "manager", "finance"]);
   const taskId = extract(event.path, /^\/tasks\/([^/]+)$/);
   const task = await updateTask(taskId, parseBody(event.body));
   return task ? response(200, task) : response(404, { message: "Task not found" });
 }
 
 async function handleArtistTransactions(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager", "Finance"]);
+  guard(user, ["admin", "manager", "finance"]);
   const artistId = extract(event.path, /^\/artists\/([^/]+)\/transactions$/);
   return response(200, { items: await listArtistTransactions(artistId) });
 }
 
 async function handleCreateTransaction(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Finance", "Manager"]);
+  guard(user, ["admin", "finance", "manager"]);
   const body = parseBody(event.body);
   if (!body.artistId || !body.amount || !body.type) {
     return response(400, { message: "artistId, amount, and type are required" });
@@ -132,32 +132,32 @@ async function handleCreateTransaction(event: APIGatewayProxyEvent, user: AuthUs
 }
 
 async function handleArtistContracts(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager", "Finance"]);
+  guard(user, ["admin", "manager", "finance"]);
   const artistId = extract(event.path, /^\/artists\/([^/]+)\/contracts$/);
   return response(200, { items: await listArtistContracts(artistId) });
 }
 
 async function handleCreateContract(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager"]);
+  guard(user, ["admin", "manager"]);
   const body = parseBody(event.body);
   if (!body.artistId || !body.title) return response(400, { message: "artistId and title are required" });
   return response(201, await createContract(body));
 }
 
 async function handleDeleteContract(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin"]);
+  guard(user, ["admin"]);
   const contractId = extract(event.path, /^\/contracts\/([^/]+)$/);
   await deleteContract(contractId);
   return noContent();
 }
 
 async function handleDashboard(_event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager", "Finance"]);
+  guard(user, ["admin", "manager", "finance"]);
   return response(200, await getDashboardSummary());
 }
 
 async function handlePresignUpload(event: APIGatewayProxyEvent, user: AuthUser) {
-  guard(user, ["Admin", "Manager", "Finance"]);
+  guard(user, ["admin", "manager", "finance"]);
   const body = parseBody(event.body);
   if (!body.artistId) return response(400, { message: "artistId is required" });
   return response(200, await createUploadUrl(body));
@@ -170,7 +170,7 @@ function parseBody(raw: string | null): Record<string, unknown> {
   try { return JSON.parse(raw) as Record<string, unknown>; } catch { return {}; }
 }
 
-function guard(user: AuthUser, allowed: Array<"Admin" | "Manager" | "Finance">) {
+function guard(user: AuthUser, allowed: Array<"admin" | "manager" | "finance">) {
   if (!hasRole(user, allowed)) {
     throw Object.assign(new Error("Forbidden"), { statusCode: 403 });
   }

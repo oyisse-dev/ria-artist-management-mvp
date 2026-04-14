@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { supabase } from "../lib/supabase";
 
-type Role = "Admin" | "Manager" | "Finance";
+type Role = "admin" | "manager" | "finance";
 
 interface AuthState {
   accessToken: string | null;

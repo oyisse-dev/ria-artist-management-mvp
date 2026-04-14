@@ -26,7 +26,7 @@ export async function getAuthUser(authHeader: string | undefined): Promise<AuthU
     .eq("id", user.id)
     .single();
 
-  const role = (profile?.role as Role) ?? "Manager";
+  const role = (profile?.role as Role) ?? "manager";
 
   return {
     id: user.id,
