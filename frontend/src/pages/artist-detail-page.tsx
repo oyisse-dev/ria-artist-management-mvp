@@ -32,7 +32,14 @@ type Contract = {
   signed_date?: string; expiry_date?: string; created_at: string;
 };
 
-type Tab = "overview" | "tasks" | "finance" | "contracts";
+type Tab = "overview" | "tasks" | "finance" | "contracts" | "team";
+
+type Assignment = {
+  artist_id: string;
+  user_id: string;
+  assigned_at: string;
+  users?: { id: string; full_name: string; role: string; };
+};
 
 export function ArtistDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -44,6 +51,8 @@ export function ArtistDetailPage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [contracts, setContracts] = useState<Contract[]>([]);
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+  const [addingUser, setAddingUser] = useState("");
   const [users, setUsers] = useState<Array<Record<string, unknown>>>([]);
   const [tab, setTab] = useState<Tab>("overview");
   const [loading, setLoading] = useState(true);
@@ -74,18 +83,34 @@ export function ArtistDetailPage() {
       supabase.from("transactions").select("*").eq("artist_id", id).order("date", { ascending: false }),
       supabase.from("contracts").select("*").eq("artist_id", id).order("created_at", { ascending: false }),
       fetchUsers(),
-    ]).then(([{ data: a }, t, { data: tx }, { data: c }, u]) => {
+      supabase.from("artist_assignments").select("*, users(id, full_name, role)").eq("artist_id", id),
+    ]).then(([{ data: a }, t, { data: tx }, { data: c }, u, { data: assign }]) => {
       setArtist(a);
       setTasks(t as Task[]);
       setTransactions((tx ?? []) as Transaction[]);
       setContracts((c ?? []) as Contract[]);
       setUsers(u);
+      setAssignments((assign ?? []) as Assignment[]);
     }).finally(() => setLoading(false));
   }, [id]);
 
   const refreshTasks = () => fetchArtistTasks(id!).then((t) => setTasks(t as Task[]));
   const refreshTx = () => supabase.from("transactions").select("*").eq("artist_id", id).order("date", { ascending: false }).then(({ data }) => setTransactions((data ?? []) as Transaction[]));
   const refreshContracts = () => supabase.from("contracts").select("*").eq("artist_id", id).order("created_at", { ascending: false }).then(({ data }) => setContracts((data ?? []) as Contract[]));
+  const refreshAssignments = () => supabase.from("artist_assignments").select("*, users(id, full_name, role)").eq("artist_id", id).then(({ data }) => setAssignments((data ?? []) as Assignment[]));
+
+  const handleAddAssignment = async () => {
+    if (!addingUser) return;
+    await supabase.from("artist_assignments").upsert({ artist_id: id, user_id: addingUser });
+    setAddingUser("");
+    await refreshAssignments();
+  };
+
+  const handleRemoveAssignment = async (userId: string) => {
+    if (!confirm("Remove this team member from the artist?")) return;
+    await supabase.from("artist_assignments").delete().eq("artist_id", id).eq("user_id", userId);
+    await refreshAssignments();
+  };
 
   const handleCreateTask = async () => {
     if (!taskForm.title) return;
@@ -164,7 +189,11 @@ export function ArtistDetailPage() {
     { key: "tasks", label: `Tasks (${tasks.length})` },
     { key: "finance", label: `Finance (${transactions.length})` },
     { key: "contracts", label: `Contracts (${contracts.length})` },
+    { key: "team", label: `Team (${assignments.length})` },
   ];
+
+  const assignedUserIds = new Set(assignments.map((a) => a.user_id));
+  const unassignedUsers = users.filter((u) => !assignedUserIds.has(String(u.id)));
 
   return (
     <section className="space-y-5">
@@ -223,6 +252,25 @@ export function ArtistDetailPage() {
               <MiniStat label="Expenses" value={fmt(txSummary.expense)} color="red" />
             </div>
           </div>
+          {assignments.length > 0 && (
+            <div className="rounded-xl border bg-white p-5">
+              <h3 className="font-semibold text-slate-800 mb-3">Assigned Team</h3>
+              <div className="flex flex-wrap gap-2">
+                {assignments.map((a) => (
+                  <div key={a.user_id} className="flex items-center gap-2 rounded-full border px-3 py-1.5">
+                    <div className="h-6 w-6 rounded-full bg-slate-200 flex items-center justify-center text-xs font-bold text-slate-600">
+                      {a.users?.full_name?.[0]?.toUpperCase() ?? "?"}
+                    </div>
+                    <span className="text-sm font-medium">{a.users?.full_name}</span>
+                    <span className={`rounded px-1.5 py-0.5 text-xs ${
+                      a.users?.role === "admin" ? "bg-purple-100 text-purple-700" :
+                      a.users?.role === "manager" ? "bg-blue-100 text-blue-700" : "bg-green-100 text-green-700"
+                    }`}>{a.users?.role}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div className="rounded-xl border bg-white p-5">
             <h3 className="font-semibold text-slate-800 mb-2">Task Summary</h3>
             <div className="flex gap-6 text-sm">
@@ -357,6 +405,68 @@ export function ArtistDetailPage() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Team / Assignments */}
+      {tab === "team" && (
+        <div className="space-y-4">
+          {user?.role === "admin" && (
+            <div className="flex items-end gap-3 rounded-xl border bg-white p-4">
+              <div className="flex-1">
+                <label className="mb-1 block text-xs font-medium text-slate-600">Assign team member to this artist</label>
+                <select value={addingUser} onChange={(e) => setAddingUser(e.target.value)}
+                  className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300">
+                  <option value="">Select team member…</option>
+                  {unassignedUsers.map((u) => (
+                    <option key={String(u.id)} value={String(u.id)}>
+                      {String(u.full_name)} ({String(u.role)})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <button onClick={handleAddAssignment} disabled={!addingUser}
+                className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50">
+                Assign
+              </button>
+            </div>
+          )}
+
+          {assignments.length === 0 && (
+            <EmptyState text="No team members assigned to this artist yet." />
+          )}
+
+          {assignments.map((a) => {
+            const member = a.users;
+            return (
+              <div key={a.user_id} className="flex items-center justify-between rounded-xl border bg-white p-4">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-sm font-bold text-slate-600">
+                    {member?.full_name?.[0]?.toUpperCase() ?? "?"}
+                  </div>
+                  <div>
+                    <p className="font-medium">{member?.full_name ?? a.user_id}</p>
+                    <div className="flex items-center gap-2 mt-0.5">
+                      <span className={`rounded px-2 py-0.5 text-xs font-medium ${
+                        member?.role === "admin" ? "bg-purple-100 text-purple-700" :
+                        member?.role === "manager" ? "bg-blue-100 text-blue-700" :
+                        "bg-green-100 text-green-700"
+                      }`}>{member?.role}</span>
+                      <span className="text-xs text-slate-400">
+                        Assigned {new Date(a.assigned_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+                {user?.role === "admin" && (
+                  <button onClick={() => handleRemoveAssignment(a.user_id)}
+                    className="rounded-lg border px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50">
+                    Remove
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
