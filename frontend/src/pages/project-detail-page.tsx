@@ -7,8 +7,9 @@ import {
   type Project, type ChecklistItem, type ProjectStatus,
   STATUS_LABELS, STATUS_COLORS, calcProgress,
 } from "../lib/projects-api";
-import { fetchArtistTransactions, createTransaction, fetchUsers } from "../lib/api";
+import { fetchUsers } from "../lib/api";
 import { FileUpload } from "../components/file-upload";
+import { ReleaseChecklist } from "../components/release-checklist";
 import { useAuthStore } from "../context/auth-store";
 
 type Tab = "checklist" | "assets" | "finance" | "team" | "audit";
@@ -213,132 +214,16 @@ export function ProjectDetailPage() {
 
       {/* CHECKLIST TAB */}
       {tab === "checklist" && (
-        <div className="space-y-2">
-          {checklist.length === 0 && (
-            <div className="rounded-xl border bg-white p-8 text-center text-slate-400">No checklist items yet.</div>
-          )}
-          {checklist.map((item) => {
-            const completion = item.checklist_completions?.[0];
-            const status = completion?.approval_status ?? "pending";
-            const isExpanded = expandedItem === item.id;
-            const isRejecting = rejectingId === item.id;
-
-            return (
-              <div key={item.id} className={`rounded-xl border bg-white overflow-hidden transition ${
-                status === "approved" ? "border-green-200 bg-green-50/30" :
-                status === "submitted" ? "border-amber-200 bg-amber-50/30" :
-                status === "rejected" ? "border-red-200 bg-red-50/30" : ""
-              }`}>
-                <div className="flex items-center gap-3 p-4 cursor-pointer" onClick={() => setExpandedItem(isExpanded ? null : item.id)}>
-                  {/* Status icon */}
-                  <div className={`flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-sm ${
-                    status === "approved" ? "bg-green-500 text-white" :
-                    status === "submitted" ? "bg-amber-400 text-white" :
-                    status === "rejected" ? "bg-red-400 text-white" : "bg-slate-100 text-slate-400"
-                  }`}>
-                    {status === "approved" ? "✓" : status === "submitted" ? "⏳" : status === "rejected" ? "✗" : item.position + 1}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className={`font-medium ${status === "approved" ? "line-through text-slate-400" : ""}`}>{item.item_name}</p>
-                    <div className="flex flex-wrap gap-2 mt-0.5 text-xs text-slate-500">
-                      {item.required && <span className="text-red-500">Required</span>}
-                      {item.users?.full_name && <span>→ {item.users.full_name}</span>}
-                      {item.due_date && <span>📅 {item.due_date}</span>}
-                      {(completion?.file_names?.length ?? 0) > 0 && <span>📎 {completion!.file_names.length} file{completion!.file_names.length > 1 ? "s" : ""}</span>}
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {status !== "approved" && !isAdmin && canWrite && status !== "submitted" && (
-                      <button onClick={(e) => { e.stopPropagation(); setExpandedItem(item.id); }}
-                        className="rounded-lg border px-3 py-1 text-xs font-medium text-blue-600 hover:bg-blue-50">
-                        Submit
-                      </button>
-                    )}
-                    {isAdmin && status === "submitted" && (
-                      <div className="flex gap-1">
-                        <button onClick={(e) => { e.stopPropagation(); handleApprove(item, true); }}
-                          className="rounded-lg bg-green-600 px-3 py-1 text-xs font-medium text-white hover:bg-green-700">Approve</button>
-                        <button onClick={(e) => { e.stopPropagation(); setRejectingId(item.id); setExpandedItem(item.id); }}
-                          className="rounded-lg bg-red-500 px-3 py-1 text-xs font-medium text-white hover:bg-red-600">Reject</button>
-                      </div>
-                    )}
-                    <span className="text-slate-300">▾</span>
-                  </div>
-                </div>
-
-                {/* Expanded panel */}
-                {isExpanded && (
-                  <div className="border-t bg-slate-50 p-4 space-y-3">
-                    {item.description && <p className="text-sm text-slate-600">{item.description}</p>}
-
-                    {/* Existing files */}
-                    {(completion?.file_names?.length ?? 0) > 0 && (
-                      <div>
-                        <p className="text-xs font-medium text-slate-600 mb-1">Uploaded Files:</p>
-                        <div className="flex flex-wrap gap-2">
-                          {completion!.file_names.map((name, i) => (
-                            <a key={i} href={completion!.file_urls[i]} target="_blank" rel="noopener noreferrer"
-                              className="flex items-center gap-1 rounded-lg border bg-white px-3 py-1 text-xs text-blue-600 hover:bg-blue-50">
-                              📎 {name}
-                            </a>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Rejection reason */}
-                    {status === "rejected" && completion?.rejection_reason && (
-                      <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-                        ❌ Rejected: {completion.rejection_reason}
-                      </div>
-                    )}
-
-                    {/* Submit form */}
-                    {canWrite && status !== "approved" && !isRejecting && (
-                      <div className="space-y-2">
-                        <FileUpload artistId={project.artist_id} onUploaded={(url, name) => setUploadedFiles((f) => [...f, { url, name }])} />
-                        {uploadedFiles.length > 0 && (
-                          <div className="flex flex-wrap gap-1">
-                            {uploadedFiles.map((f, i) => (
-                              <span key={i} className="rounded bg-green-50 px-2 py-0.5 text-xs text-green-700">✅ {f.name}</span>
-                            ))}
-                          </div>
-                        )}
-                        <textarea value={submitForm.notes} rows={2}
-                          onChange={(e) => setSubmitForm({ notes: e.target.value })}
-                          placeholder="Add notes (optional)…"
-                          className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-slate-300" />
-                        <button onClick={() => handleSubmit(item)} disabled={submittingId === item.id}
-                          className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50">
-                          {submittingId === item.id ? "Submitting…" : "Submit for Approval"}
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Reject form */}
-                    {isRejecting && isAdmin && (
-                      <div className="space-y-2">
-                        <textarea value={rejectReason} rows={2}
-                          onChange={(e) => setRejectReason(e.target.value)}
-                          placeholder="Reason for rejection…"
-                          className="w-full rounded-lg border px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-red-300" />
-                        <div className="flex gap-2">
-                          <button onClick={() => handleApprove(item, false)} disabled={!rejectReason}
-                            className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white hover:bg-red-600 disabled:opacity-50">
-                            Confirm Reject
-                          </button>
-                          <button onClick={() => { setRejectingId(null); setRejectReason(""); }}
-                            className="rounded-lg border px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
+        <ReleaseChecklist
+          checklist={checklist}
+          projectId={project.id}
+          artistId={project.artist_id}
+          targetDate={project.target_date}
+          onRefresh={refreshChecklist}
+        />
       )}
+
+
 
       {/* ASSETS TAB */}
       {tab === "assets" && (
