@@ -9,6 +9,7 @@ interface Props {
   projectId: string;
   artistId: string;
   targetDate?: string;
+  teamMembers: Array<{ id: string; full_name: string; role: string }>;
   onRefresh: () => void;
 }
 
@@ -32,7 +33,7 @@ const STATUS_CONFIG = {
   rejected:  { label: "Rejected",          color: "bg-red-100 text-red-600",      dot: "bg-red-400"   },
 };
 
-export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, onRefresh }: Props) {
+export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, teamMembers, onRefresh }: Props) {
   const { user } = useAuthStore();
   const isAdmin = user?.role === "admin";
   const canSubmit = user?.role === "admin" || user?.role === "manager";
@@ -96,7 +97,63 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, o
     await submitChecklistCompletion(item.id, { notes: "Marked complete" });
     const updated = await supabase.from("checklist_completions").select("id").eq("checklist_id", item.id).single();
     if (updated.data?.id) await approveChecklistItem(updated.data.id, true);
+
+    // Mirror checklist item as a completed task
+    const { data: existingTask } = await supabase
+      .from("tasks")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("title", item.item_name)
+      .single();
+
+    if (existingTask?.id) {
+      await supabase.from("tasks").update({
+        completed: true,
+        completed_at: new Date().toISOString(),
+      }).eq("id", existingTask.id);
+    }
+
     onRefresh();
+  };
+
+  const handleAssignChecklistItem = async (item: ChecklistItem, userId: string) => {
+    await updateChecklistAssignment(item, userId || null);
+
+    // Create or update mirrored task
+    const { data: existingTask } = await supabase
+      .from("tasks")
+      .select("id")
+      .eq("project_id", projectId)
+      .eq("title", item.item_name)
+      .single();
+
+    if (existingTask?.id) {
+      await supabase.from("tasks").update({
+        assigned_to: userId || null,
+      }).eq("id", existingTask.id);
+    } else {
+      const { data: currentUser } = await supabase.auth.getUser();
+      const dueDate = dueDateFromOffset((item as any).due_offset_days, targetDate);
+      await supabase.from("tasks").insert({
+        project_id: projectId,
+        artist_id: artistId,
+        title: item.item_name,
+        description: item.description || null,
+        due_date: dueDate,
+        assigned_to: userId || null,
+        completed: false,
+        created_by: currentUser.user?.id,
+      });
+    }
+
+    onRefresh();
+  };
+
+  const updateChecklistAssignment = async (item: ChecklistItem, userId: string | null) => {
+    await supabase.from("project_checklists").update({
+      assigned_to: userId,
+      assignee_role: userId ? (teamMembers.find((u) => u.id === userId)?.role ?? item.assignee_role) : null,
+    }).eq("id", item.id);
   };
 
   const handleApprove = async (item: ChecklistItem) => {
@@ -113,6 +170,13 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, o
     setRejectingId(null);
     setRejectReason("");
     onRefresh();
+  };
+
+  const dueDateFromOffset = (offsetDays?: number | null, target?: string) => {
+    if (offsetDays === undefined || offsetDays === null || !target) return null;
+    const d = new Date(target);
+    d.setDate(d.getDate() + offsetDays);
+    return d.toISOString().slice(0, 10);
   };
 
   const dueDateLabel = (offsetDays?: number | null) => {
@@ -235,7 +299,11 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, o
                           </div>
                           <div className="mt-0.5 flex flex-wrap gap-3 text-xs">
                             <span className={`rounded-full px-2 py-0.5 ${cfg.color}`}>{cfg.label}</span>
-                            {(item as any).assignee_role && <span className="text-slate-500">👤 {(item as any).assignee_role}</span>}
+                            {(item as any).assigned_to ? (
+                              <span className="text-slate-500">👤 {teamMembers.find((u) => u.id === (item as any).assigned_to)?.full_name ?? (item as any).assignee_role}</span>
+                            ) : (
+                              (item as any).assignee_role && <span className="text-slate-500">👤 {(item as any).assignee_role}</span>
+                            )}
                             {(item as any).approver_role && <span className="text-slate-500">✅ Approver: {(item as any).approver_role}</span>}
                             {dueDateLabel(dueOffset)}
                             {(completion?.file_names?.length ?? 0) > 0 && (
@@ -246,6 +314,18 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, o
 
                         {/* Action buttons */}
                         <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                          {/* Assign team member */}
+                          {canSubmit && (
+                            <select
+                              value={String((item as any).assigned_to ?? "")}
+                              onChange={(e) => handleAssignChecklistItem(item, e.target.value)}
+                              className="rounded-lg border px-2 py-1.5 text-xs focus:outline-none focus:ring-2 focus:ring-slate-300">
+                              <option value="">Assign…</option>
+                              {teamMembers.map((m) => (
+                                <option key={m.id} value={m.id}>{m.full_name} ({m.role})</option>
+                              ))}
+                            </select>
+                          )}
                           {/* Mark complete (no deliverable) */}
                           {!hasDeliverable && status === "pending" && canSubmit && (
                             <button onClick={() => handleMarkComplete(item)}

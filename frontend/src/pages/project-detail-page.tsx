@@ -219,6 +219,10 @@ export function ProjectDetailPage() {
           projectId={project.id}
           artistId={project.artist_id}
           targetDate={project.target_date}
+          teamMembers={assignments
+            .map((a: any) => a.users)
+            .filter(Boolean)
+            .map((u: any) => ({ id: u.id, full_name: u.full_name, role: u.role }))}
           onRefresh={refreshChecklist}
         />
       )}
