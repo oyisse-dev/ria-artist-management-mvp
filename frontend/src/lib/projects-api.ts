@@ -193,7 +193,7 @@ export async function submitChecklistCompletion(
       file_names: body.fileNames ?? [],
       notes: body.notes || null,
       approval_status: "submitted",
-    })
+    }, { onConflict: "checklist_id" })
     .select()
     .single();
   if (error) throw error;

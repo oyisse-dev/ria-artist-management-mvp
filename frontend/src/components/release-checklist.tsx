@@ -188,16 +188,51 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
 
   const handleSubmit = async (item: ChecklistItem) => {
     setSubmittingId(item.id);
-    await submitChecklistCompletion(item.id, {
-      notes: submitNotes,
-      fileUrls: uploadedFiles.map((f) => f.url),
-      fileNames: uploadedFiles.map((f) => f.name),
-    });
-    setSubmittingId(null);
-    setExpandedItem(null);
-    setSubmitNotes("");
-    setUploadedFiles([]);
-    onRefresh();
+    try {
+      const completion = await submitChecklistCompletion(item.id, {
+        notes: submitNotes,
+        fileUrls: uploadedFiles.map((f) => f.url),
+        fileNames: uploadedFiles.map((f) => f.name),
+      });
+
+      // Mirror checklist submission as task update/creation
+      const { data: existingTask } = await supabase
+        .from("tasks")
+        .select("id")
+        .eq("project_id", projectId)
+        .eq("title", item.item_name)
+        .single();
+
+      const dueDate = dueDateFromOffset((item as any).due_offset_days, targetDate);
+      if (existingTask?.id) {
+        await supabase.from("tasks").update({
+          due_date: dueDate,
+          completed: false,
+          updated_at: new Date().toISOString(),
+        }).eq("id", existingTask.id);
+      } else {
+        const { data: currentUser } = await supabase.auth.getUser();
+        await supabase.from("tasks").insert({
+          project_id: projectId,
+          artist_id: artistId,
+          title: item.item_name,
+          description: item.description || null,
+          due_date: dueDate,
+          assigned_to: (item as any).assigned_to || null,
+          completed: false,
+          created_by: currentUser.user?.id,
+        });
+      }
+
+      setExpandedItem(null);
+      setSubmitNotes("");
+      setUploadedFiles([]);
+      onRefresh();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Submission failed. Please try again.");
+    } finally {
+      setSubmittingId(null);
+    }
   };
 
   const handleMarkComplete = async (item: ChecklistItem) => {

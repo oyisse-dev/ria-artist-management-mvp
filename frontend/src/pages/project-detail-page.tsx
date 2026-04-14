@@ -47,13 +47,13 @@ export function ProjectDetailPage() {
     if (!id) return;
     setLoading(true);
     try {
-      const [p, cl, tx, al, u, assign] = await Promise.all([
-        fetchProject(id),
+      const p = await fetchProject(id);
+      const [cl, tx, al, u, assign] = await Promise.all([
         fetchProjectChecklist(id),
         supabase.from("transactions").select("*").eq("project_id", id).order("date", { ascending: false }),
         fetchAuditLog("projects", id),
         fetchUsers(),
-        supabase.from("artist_assignments").select("*, users(id, full_name, role)").eq("artist_id", (await fetchProject(id)).artist_id),
+        supabase.from("artist_assignments").select("*, users(id, full_name, role)").eq("artist_id", p.artist_id),
       ]);
       setProject(p);
       setChecklist(cl);
