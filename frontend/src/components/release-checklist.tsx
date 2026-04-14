@@ -243,8 +243,6 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
       setSubmittingId(null);
       if (submitOk) {
         alert("Submitted successfully. Status should now show 'Pending Approval'.");
-        // force-sync UI for stubborn browser cache/state issues
-        setTimeout(() => window.location.reload(), 150);
       }
     }
   };
@@ -291,7 +289,6 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
 
     await onRefresh();
     alert("Marked complete.");
-    setTimeout(() => window.location.reload(), 150);
   };
 
   const handleAssignChecklistItem = async (item: ChecklistItem, userId: string) => {

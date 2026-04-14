@@ -27,6 +27,7 @@ export function ProjectDetailPage() {
   const [teamMembers, setTeamMembers] = useState<Array<Record<string, unknown>>>([]);
   const [assignments, setAssignments] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const [tab, setTab] = useState<Tab>("checklist");
 
   // Transaction modal
@@ -63,19 +64,12 @@ export function ProjectDetailPage() {
     }
   };
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => { load(); }, [id, refreshNonce]);
 
   const refreshChecklist = async () => {
     if (!id) return;
-    const cl = await fetchProjectChecklist(id);
-    setChecklist(cl);
-
-    const [tx, al] = await Promise.all([
-      supabase.from("transactions").select("*").eq("project_id", id).order("date", { ascending: false }),
-      fetchAuditLog("projects", id),
-    ]);
-    setTransactions(tx.data ?? []);
-    setAuditLog(al);
+    // Hard refresh from server by bumping nonce, avoids stale nested-cache issues
+    setRefreshNonce((n) => n + 1);
   };
 
   const handleTxCreate = async () => {
