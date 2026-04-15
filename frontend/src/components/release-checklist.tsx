@@ -182,6 +182,8 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [editingTask, setEditingTask] = useState<ChecklistItem | null>(null);
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
   const [dragItemId, setDragItemId] = useState<string | null>(null);
+  const [dropTargetStatus, setDropTargetStatus] = useState<string | null>(null);
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameGroupValue, setRenameGroupValue] = useState("");
   const [editForm, setEditForm] = useState({
@@ -514,6 +516,23 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     await onRefresh();
   };
 
+  const saveInlineComment = async (item: ChecklistItem) => {
+    const text = (commentDrafts[item.id] ?? "").trim();
+    if (!text) return;
+    const completion = getCompletion(item);
+    if (!completion?.id) {
+      await submitChecklistCompletion(item.id, { notes: text });
+    } else {
+      const { error } = await supabase
+        .from("checklist_completions")
+        .update({ notes: text })
+        .eq("id", completion.id);
+      if (error) throw error;
+    }
+    setCommentDrafts((prev) => ({ ...prev, [item.id]: "" }));
+    await onRefresh();
+  };
+
   const openEditModal = (item: ChecklistItem) => {
     setEditingTask(item);
     setEditForm({
@@ -722,8 +741,9 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
             return (
               <div
                 key={statusKey}
-                className="rounded-xl border bg-white"
-                onDragOver={(e) => e.preventDefault()}
+                className={`rounded-xl border bg-white transition ${dropTargetStatus === statusKey ? "ring-2 ring-cyan-300 border-cyan-300" : ""}`}
+                onDragOver={(e) => { e.preventDefault(); setDropTargetStatus(statusKey); }}
+                onDragLeave={() => setDropTargetStatus((prev) => (prev === statusKey ? null : prev))}
                 onDrop={async (e) => {
                   e.preventDefault();
                   if (!dragItemId) return;
@@ -731,6 +751,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                   if (!dragging) return;
                   await moveBoardItem(dragging, statusKey);
                   setDragItemId(null);
+                  setDropTargetStatus(null);
                 }}
               >
                 <div className="border-b px-3 py-2">
@@ -812,6 +833,15 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                         {isAdmin && status === "submitted" && <button onClick={() => { setRejectingId(item.id); setExpandedItem(item.id); }} className="rounded border px-2 py-1 text-xs text-red-700">Reject</button>}
                         {(item.has_deliverable !== false) && status !== "approved" && status !== "submitted" && canSubmit && <button onClick={() => setExpandedItem(item.id)} className="rounded border px-2 py-1 text-xs text-blue-700">Add file</button>}
                         <button onClick={() => openEditModal(item)} className="rounded border px-2 py-1 text-xs text-slate-600">Comment/Edit</button>
+                      </div>
+                      <div className="mt-1 flex gap-1">
+                        <input
+                          value={commentDrafts[item.id] ?? ""}
+                          onChange={(e) => setCommentDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                          placeholder="Quick comment"
+                          className="w-40 rounded border px-2 py-1 text-xs"
+                        />
+                        <button onClick={() => saveInlineComment(item)} className="rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">Save</button>
                       </div>
                       {(completion?.file_names?.length ?? 0) > 0 && (
                         <p className="mt-1 text-xs text-slate-500">📎 {completion.file_names[0]}</p>
@@ -1187,6 +1217,15 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                   <li>Submitted: {completion?.completed_at ? new Date(completion.completed_at).toLocaleString() : "—"}</li>
                   <li>Approved: {completion?.approved_at ? new Date(completion.approved_at).toLocaleString() : "—"}</li>
                 </ul>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Activity timeline</p>
+                <div className="mt-1 space-y-1 text-xs text-slate-600">
+                  <div className="rounded bg-slate-50 px-2 py-1">Created checklist item</div>
+                  {completion?.completed_at && <div className="rounded bg-amber-50 px-2 py-1">Submitted: {new Date(completion.completed_at).toLocaleString()}</div>}
+                  {completion?.approved_at && <div className="rounded bg-green-50 px-2 py-1">Approved: {new Date(completion.approved_at).toLocaleString()}</div>}
+                  {completion?.rejection_reason && <div className="rounded bg-red-50 px-2 py-1">Rejected: {completion.rejection_reason}</div>}
+                </div>
               </div>
               <div>
                 <p className="text-xs text-slate-500">Quick Actions</p>
