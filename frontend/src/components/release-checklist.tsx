@@ -166,6 +166,8 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [showArchived, setShowArchived] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
   const [editingTask, setEditingTask] = useState<ChecklistItem | null>(null);
+  const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
+  const [renameGroupValue, setRenameGroupValue] = useState("");
   const [editForm, setEditForm] = useState({
     item_name: "",
     description: "",
@@ -497,6 +499,29 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     await onRefresh();
   };
 
+  const handleRenameGroup = async (from: string, to: string) => {
+    const next = to.trim();
+    if (!next || next === from) {
+      setRenamingGroup(null);
+      setRenameGroupValue("");
+      return;
+    }
+    const items = groups[from] ?? [];
+    await Promise.all(items.map((it) => updateChecklistItem(it.id, { group_name: next })));
+    setRenamingGroup(null);
+    setRenameGroupValue("");
+    await onRefresh();
+  };
+
+  const handleArchiveGroup = async (groupName: string) => {
+    if (!canSubmit) return;
+    const items = groups[groupName] ?? [];
+    if (!items.length) return;
+    if (!confirm(`Archive category "${groupName}" and all ${items.length} task(s)? You can restore them from Archive.`)) return;
+    await Promise.all(items.map((it) => archiveChecklistItem(it.id)));
+    await onRefresh();
+  };
+
   return (
     <div className="space-y-4">
       {/* Summary bar */}
@@ -569,7 +594,25 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
               <div className="flex items-center gap-3">
                 <span className="text-lg">{GROUP_ICONS[groupName] ?? "📌"}</span>
                 <div className="text-left">
-                  <p className="font-semibold text-slate-800">{groupName}</p>
+                  {renamingGroup === groupName ? (
+                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        value={renameGroupValue}
+                        onChange={(e) => setRenameGroupValue(e.target.value)}
+                        className="rounded border px-2 py-1 text-xs"
+                      />
+                      <button
+                        onClick={() => handleRenameGroup(groupName, renameGroupValue)}
+                        className="rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                      >Save</button>
+                      <button
+                        onClick={() => { setRenamingGroup(null); setRenameGroupValue(""); }}
+                        className="rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                      >Cancel</button>
+                    </div>
+                  ) : (
+                    <p className="font-semibold text-slate-800">{groupName}</p>
+                  )}
                   <p className="text-xs text-slate-500">{gp.approved}/{gp.total} completed</p>
                 </div>
               </div>
@@ -591,6 +634,22 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                     className="rounded-lg border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
                   >
                     + Task
+                  </button>
+                )}
+                {canSubmit && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setRenamingGroup(groupName); setRenameGroupValue(groupName); }}
+                    className="rounded-lg border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                  >
+                    Rename
+                  </button>
+                )}
+                {canSubmit && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleArchiveGroup(groupName); }}
+                    className="rounded-lg border border-red-200 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
+                  >
+                    Archive List
                   </button>
                 )}
                 <span className="text-slate-300 text-sm">{isCollapsed ? "▶" : "▾"}</span>
