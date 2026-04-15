@@ -198,6 +198,10 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [bulkCandidateMap, setBulkCandidateMap] = useState<Record<string, string>>({});
   const [digestSending, setDigestSending] = useState(false);
   const [digestMsg, setDigestMsg] = useState<string | null>(null);
+  const [digestPanelOpen, setDigestPanelOpen] = useState(false);
+  const [digestPanelKind, setDigestPanelKind] = useState<"pending_approval" | "assigned_digest" | null>(null);
+  const [digestPanelItems, setDigestPanelItems] = useState<any[]>([]);
+  const [digestGeneratedAt, setDigestGeneratedAt] = useState<string | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameGroupValue, setRenameGroupValue] = useState("");
   const [editForm, setEditForm] = useState({
@@ -539,6 +543,23 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
       }
 
       const label = kind === "pending_approval" ? "Review Queue Summary" : "Assigned Work Summary";
+      const items = (data?.items ?? []).map((it: any) => {
+        const local = activeChecklist.find((c: any) => String(c.id) === String(it.id));
+        const completion = local ? getCompletion(local as any) : null;
+        return {
+          ...it,
+          title: it.item_name ?? local?.item_name ?? "Checklist item",
+          status: it.status ?? completion?.approval_status ?? "pending",
+          assigned_to: it.assigned_to ?? local?.assigned_to ?? null,
+          assignee_role: it.assignee_role ?? local?.assignee_role ?? null,
+          due_offset_days: it.due_offset_days ?? local?.due_offset_days ?? null,
+        };
+      });
+
+      setDigestPanelKind(kind);
+      setDigestPanelItems(items);
+      setDigestGeneratedAt(new Date().toISOString());
+      setDigestPanelOpen(true);
       setDigestMsg(`${label} generated: ${data?.count ?? 0} items.`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "unknown error";
@@ -1507,6 +1528,56 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
           </div>
         );
       })()}
+
+      {digestPanelOpen && (
+        <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md border-l bg-white shadow-2xl">
+          <div className="flex items-center justify-between border-b px-4 py-3">
+            <div>
+              <h4 className="font-semibold text-slate-800">{digestPanelKind === "pending_approval" ? "Review Queue Summary" : "Assigned Work Summary"}</h4>
+              <p className="text-xs text-slate-500">{digestGeneratedAt ? new Date(digestGeneratedAt).toLocaleString() : "Just now"} · {digestPanelItems.length} item(s)</p>
+            </div>
+            <button onClick={() => setDigestPanelOpen(false)} className="rounded border px-2 py-1 text-xs text-slate-600">Close</button>
+          </div>
+          <div className="space-y-2 overflow-y-auto p-4 text-sm">
+            {digestPanelItems.length === 0 && (
+              <div className="rounded-lg border border-dashed p-4 text-center text-xs text-slate-400">No items matched this summary right now.</div>
+            )}
+            {digestPanelItems.map((it: any) => {
+              const assignee = teamMembers.find((u) => String(u.id) === String(it.assigned_to));
+              return (
+                <div key={String(it.id)} className="rounded-lg border p-3">
+                  <p className="font-medium text-slate-800">{it.title}</p>
+                  <div className="mt-1 space-y-0.5 text-xs text-slate-500">
+                    <p>Status: {String(it.status ?? "pending")}</p>
+                    <p>Assignee: {assignee?.full_name ?? it.assignee_role ?? "Unassigned"}</p>
+                    <p>Due: {it.due_offset_days ?? "—"} days offset</p>
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => {
+                        setDigestPanelOpen(false);
+                        setDetailItemId(String(it.id));
+                      }}
+                      className="rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                    >
+                      Open item
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDigestPanelOpen(false);
+                        jumpToItem(String(it.id));
+                      }}
+                      className="rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                    >
+                      Jump in checklist
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {editingTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">

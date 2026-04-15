@@ -91,7 +91,15 @@ Deno.serve(async (req) => {
       const st = statusMap.get(String(i.id)) ?? "pending";
       if (kind === "pending_approval") return st === "submitted";
       return st !== "approved";
-    }).slice(0, 120);
+    }).slice(0, 120).map((i: any) => ({
+      id: i.id,
+      project_id: i.project_id,
+      item_name: i.item_name,
+      assignee_role: i.assignee_role ?? null,
+      assigned_to: i.assigned_to ?? null,
+      status: statusMap.get(String(i.id)) ?? "pending",
+      due_offset_days: i.due_offset_days ?? null,
+    }));
 
     const { error: insertErr } = await admin.from("checklist_reminder_log").insert({
       user_id: me.id,
@@ -114,7 +122,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ ok: true, kind, count: payloadItems.length, debug: { pendingCount: pending.length, submissionsCount: submissions.length } }), {
+    return new Response(JSON.stringify({ ok: true, kind, count: payloadItems.length, items: payloadItems, debug: { pendingCount: pending.length, submissionsCount: submissions.length } }), {
       status: 200,
       headers: { ...cors, "Content-Type": "application/json" },
     });
