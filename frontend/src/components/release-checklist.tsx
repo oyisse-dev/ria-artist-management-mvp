@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import {
   submitChecklistCompletion,
@@ -19,10 +19,21 @@ interface Props {
   targetDate?: string;
   teamMembers: Array<{ id: string; full_name: string; role: string }>;
   onRefresh: () => void;
+  focusStatus?: Filter | null;
 }
 
 type Filter = "all" | "pending" | "submitted" | "approved" | "rejected";
+type DisplayMode = "detailed" | "table" | "board";
+type QuickFilter = "mine" | "overdue" | "requires_file" | "waiting_approval";
 const DELIVERABLE_TYPES = ["audio", "artwork", "document", "video", "link", "none", "custom"] as const;
+const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
+const PRIORITY_SCORE: Record<string, number> = { low: 1, medium: 2, high: 3, urgent: 4 };
+const PRIORITY_PILL: Record<string, string> = {
+  low: "bg-slate-100 text-slate-600",
+  medium: "bg-blue-100 text-blue-700",
+  high: "bg-red-100 text-red-700",
+  urgent: "bg-fuchsia-100 text-fuchsia-700",
+};
 
 const GROUP_ICONS: Record<string, string> = {
   "Pre-Production": "🎯",
@@ -150,12 +161,18 @@ const STATUS_CONFIG = {
   rejected:  { label: "Rejected",          color: "bg-red-100 text-red-600",      dot: "bg-red-400"   },
 };
 
-export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, teamMembers, onRefresh }: Props) {
+export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, teamMembers, onRefresh, focusStatus }: Props) {
   const { user } = useAuthStore();
   const isAdmin = user?.role === "admin";
   const canSubmit = user?.role === "admin" || user?.role === "manager";
 
   const [filter, setFilter] = useState<Filter>("all");
+
+  useEffect(() => {
+    if (focusStatus && ["all", "pending", "submitted", "approved", "rejected"].includes(focusStatus)) {
+      setFilter(focusStatus as Filter);
+    }
+  }, [focusStatus]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
   const [submitNotes, setSubmitNotes] = useState("");
@@ -165,7 +182,26 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
+  const [displayMode, setDisplayMode] = useState<DisplayMode>("detailed");
+  const [search, setSearch] = useState("");
+  const [prioritySort, setPrioritySort] = useState(false);
+  const [quickFilters, setQuickFilters] = useState<Set<QuickFilter>>(new Set());
   const [editingTask, setEditingTask] = useState<ChecklistItem | null>(null);
+  const [creatingGroupName, setCreatingGroupName] = useState<string | null>(null);
+  const [detailItemId, setDetailItemId] = useState<string | null>(null);
+  const [dragItemId, setDragItemId] = useState<string | null>(null);
+  const [dropTargetStatus, setDropTargetStatus] = useState<string | null>(null);
+  const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [highlightItemId, setHighlightItemId] = useState<string | null>(null);
+  const [showSubmitModalFor, setShowSubmitModalFor] = useState<string | null>(null);
+  const [showReviewModalFor, setShowReviewModalFor] = useState<string | null>(null);
+  const [bulkCandidateMap, setBulkCandidateMap] = useState<Record<string, string>>({});
+  const [digestSending, setDigestSending] = useState(false);
+  const [digestMsg, setDigestMsg] = useState<string | null>(null);
+  const [digestPanelOpen, setDigestPanelOpen] = useState(false);
+  const [digestPanelKind, setDigestPanelKind] = useState<"pending_approval" | "assigned_digest" | null>(null);
+  const [digestPanelItems, setDigestPanelItems] = useState<any[]>([]);
+  const [digestGeneratedAt, setDigestGeneratedAt] = useState<string | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameGroupValue, setRenameGroupValue] = useState("");
   const [editForm, setEditForm] = useState({
@@ -207,8 +243,41 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const getStatus = (item: ChecklistItem) =>
     (getCompletion(item)?.approval_status ?? "pending") as keyof typeof STATUS_CONFIG;
 
-  const filtered = (items: ChecklistItem[]) =>
-    filter === "all" ? items : items.filter((i) => getStatus(i) === filter);
+  const matchesSearch = (item: ChecklistItem) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    const completion = getCompletion(item);
+    const title = String(item.item_name ?? "").toLowerCase();
+    const notes = String(completion?.notes ?? "").toLowerCase();
+    const files = (completion?.file_names ?? []).join(" ").toLowerCase();
+    return title.includes(q) || notes.includes(q) || files.includes(q);
+  };
+
+  const isOverdue = (item: ChecklistItem) => {
+    const dueOffset = (item as any).due_offset_days;
+    if (dueOffset === undefined || dueOffset === null || !targetDate) return false;
+    const d = new Date(targetDate);
+    d.setDate(d.getDate() + dueOffset);
+    return d.getTime() < Date.now() && getStatus(item) !== "approved";
+  };
+
+  const withQuickFilters = (item: ChecklistItem) => {
+    if (quickFilters.size === 0) return true;
+    const assignedToMe = quickFilters.has("mine") ? String((item as any).assigned_to ?? "") === String(user?.id ?? "") : true;
+    const overdue = quickFilters.has("overdue") ? isOverdue(item) : true;
+    const requiresFile = quickFilters.has("requires_file") ? (item as any).has_deliverable !== false : true;
+    const waitingApproval = quickFilters.has("waiting_approval") ? getStatus(item) === "submitted" : true;
+    return assignedToMe && overdue && requiresFile && waitingApproval;
+  };
+
+  const filtered = (items: ChecklistItem[]) => {
+    const base = (filter === "all" ? items : items.filter((i) => getStatus(i) === filter))
+      .filter(matchesSearch)
+      .filter(withQuickFilters);
+
+    if (!prioritySort) return base;
+    return [...base].sort((a: any, b: any) => (PRIORITY_SCORE[String(b.priority ?? "low")] ?? 1) - (PRIORITY_SCORE[String(a.priority ?? "low")] ?? 1));
+  };
 
   const groupProgress = (items: ChecklistItem[]) => {
     const approved = items.filter((i) => getStatus(i) === "approved").length;
@@ -379,6 +448,40 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     onRefresh();
   };
 
+  const moveBoardItem = async (item: ChecklistItem, target: "pending" | "submitted" | "approved" | "rejected") => {
+    const completion = getCompletion(item);
+    if (target === "pending") {
+      await submitChecklistCompletion(item.id, { notes: completion?.notes ?? "Moved to To Do" });
+      const updated = await supabase.from("checklist_completions").update({ approval_status: "pending", approver_id: null, approved_at: null, rejection_reason: null }).eq("checklist_id", item.id);
+      if (updated.error) throw updated.error;
+      await onRefresh();
+      return;
+    }
+
+    if (target === "submitted") {
+      await submitChecklistCompletion(item.id, {
+        notes: completion?.notes ?? "Moved to Pending Approval",
+        fileUrls: completion?.file_urls ?? [],
+        fileNames: completion?.file_names ?? [],
+      });
+      await onRefresh();
+      return;
+    }
+
+    if (!completion?.id) {
+      await submitChecklistCompletion(item.id, { notes: "Auto-created before board move" });
+      await onRefresh();
+      return;
+    }
+
+    if (target === "approved") {
+      await approveChecklistItem(completion.id, true);
+    } else if (target === "rejected") {
+      await approveChecklistItem(completion.id, false, "Rejected from board");
+    }
+    await onRefresh();
+  };
+
   const handleReject = async (item: ChecklistItem) => {
     const completion = getCompletion(item);
     if (!completion || !rejectReason) return;
@@ -395,15 +498,131 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     return d.toISOString().slice(0, 10);
   };
 
+  const getNextPendingRequired = () => {
+    const pending = activeChecklist.find((i: any) => i.required && getStatus(i) !== "approved");
+    return pending ?? null;
+  };
+
+  const bulkMatchFilesToItems = (files: Array<{ url: string; name: string }>) => {
+    const map: Record<string, string> = {};
+    const normalizedItems = activeChecklist.map((i: any) => ({
+      id: String(i.id),
+      title: String(i.item_name ?? "").toLowerCase(),
+    }));
+
+    for (const f of files) {
+      const name = f.name.toLowerCase();
+      let best: { id: string; score: number } | null = null;
+      for (const it of normalizedItems) {
+        let score = 0;
+        const words = it.title.split(/[^a-z0-9]+/).filter((w: string) => w.length > 3);
+        for (const w of words) if (name.includes(w)) score += 1;
+        if (!best || score > best.score) best = { id: it.id, score };
+      }
+      if (best && best.score > 0) map[f.name] = best.id;
+    }
+    setBulkCandidateMap(map);
+  };
+
+  const triggerDigest = async (kind: "pending_approval" | "assigned_digest") => {
+    try {
+      setDigestSending(true);
+      setDigestMsg(null);
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+
+      const { data, error } = await supabase.functions.invoke("checklist-digest", {
+        body: { kind },
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+      });
+
+      if (error) {
+        const details = (error as any)?.context ? ` (${String((error as any).context).slice(0, 180)})` : "";
+        throw new Error(`${error.message}${details}`);
+      }
+
+      const label = kind === "pending_approval" ? "Review Queue Summary" : "Assigned Work Summary";
+      const items = (data?.items ?? []).map((it: any) => {
+        const local = activeChecklist.find((c: any) => String(c.id) === String(it.id));
+        const completion = local ? getCompletion(local as any) : null;
+        return {
+          ...it,
+          title: it.item_name ?? local?.item_name ?? "Checklist item",
+          status: it.status ?? completion?.approval_status ?? "pending",
+          assigned_to: it.assigned_to ?? local?.assigned_to ?? null,
+          assignee_role: it.assignee_role ?? local?.assignee_role ?? null,
+          due_offset_days: it.due_offset_days ?? local?.due_offset_days ?? null,
+        };
+      });
+
+      setDigestPanelKind(kind);
+      setDigestPanelItems(items);
+      setDigestGeneratedAt(new Date().toISOString());
+      setDigestPanelOpen(true);
+      const dbg = data?.debug ? ` [source: ${data.debug.pendingCount ?? 0} checklist / ${data.debug.submissionsCount ?? 0} submissions]` : "";
+      setDigestMsg(`${label} generated: ${data?.count ?? 0} items.${dbg}`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "unknown error";
+      const m = msg.toLowerCase();
+      if (m.includes("failed to send a request")) {
+        setDigestMsg("Digest service unreachable. Likely cause: checklist-digest Edge Function is not deployed yet.");
+      } else if (m.includes("401") || m.includes("unauthorized") || m.includes("forbidden")) {
+        setDigestMsg("Digest failed: session/permission issue. Please sign out and sign in again, then retry.");
+      } else {
+        setDigestMsg(`Digest failed: ${msg}`);
+      }
+    } finally {
+      setDigestSending(false);
+    }
+  };
+
+  const applyBulkMatches = async () => {
+    const entries = Object.entries(bulkCandidateMap);
+    if (!entries.length) return;
+    for (const [fname, itemId] of entries) {
+      const file = uploadedFiles.find((f) => f.name === fname);
+      if (!file) continue;
+      const target = activeChecklist.find((i) => i.id === itemId);
+      if (!target) continue;
+      const completion = getCompletion(target);
+      const existingUrls = completion?.file_urls ?? [];
+      const existingNames = completion?.file_names ?? [];
+      const nextUrls = [...existingUrls, file.url];
+      const nextNames = [...existingNames, file.name];
+      await submitChecklistCompletion(target.id, {
+        notes: completion?.notes ?? "Bulk matched upload",
+        fileUrls: nextUrls,
+        fileNames: nextNames,
+      });
+    }
+    setBulkCandidateMap({});
+    await onRefresh();
+    alert("Bulk auto-match applied.");
+  };
+
+  const jumpToItem = (itemId: string) => {
+    const el = typeof document !== "undefined" ? document.getElementById(`check-item-${itemId}`) : null;
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightItemId(itemId);
+      setTimeout(() => setHighlightItemId((prev) => (prev === itemId ? null : prev)), 1800);
+    } else {
+      setDetailItemId(itemId);
+    }
+  };
+
   const dueDateLabel = (offsetDays?: number | null) => {
-    if (offsetDays === undefined || offsetDays === null || !targetDate) return null;
+    if (offsetDays === undefined || offsetDays === null || !targetDate) return <span className="text-slate-400">No due date</span>;
     const d = new Date(targetDate);
     d.setDate(d.getDate() + offsetDays);
     const diff = Math.round((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-    const label = d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-    if (diff < 0) return <span className="text-red-500 font-medium">⚠️ Overdue ({label})</span>;
-    if (diff <= 3) return <span className="text-amber-600 font-medium">🔥 Due {label} ({diff}d)</span>;
-    return <span className="text-slate-500">📅 Due {label}</span>;
+    const abs = d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    if (diff < 0) return <span className="text-red-500 font-medium">Overdue {Math.abs(diff)}d ({abs})</span>;
+    if (diff === 0) return <span className="text-amber-600 font-medium">Today ({abs})</span>;
+    if (diff === 1) return <span className="text-amber-600 font-medium">Tomorrow ({abs})</span>;
+    if (diff <= 3) return <span className="text-amber-600 font-medium">Due in {diff}d ({abs})</span>;
+    return <span className="text-slate-500">{abs}</span>;
   };
 
   const handleArchive = async (item: ChecklistItem) => {
@@ -424,6 +643,23 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     await onRefresh();
   };
 
+  const saveInlineComment = async (item: ChecklistItem) => {
+    const text = (commentDrafts[item.id] ?? "").trim();
+    if (!text) return;
+    const completion = getCompletion(item);
+    if (!completion?.id) {
+      await submitChecklistCompletion(item.id, { notes: text });
+    } else {
+      const { error } = await supabase
+        .from("checklist_completions")
+        .update({ notes: text })
+        .eq("id", completion.id);
+      if (error) throw error;
+    }
+    setCommentDrafts((prev) => ({ ...prev, [item.id]: "" }));
+    await onRefresh();
+  };
+
   const openEditModal = (item: ChecklistItem) => {
     setEditingTask(item);
     setEditForm({
@@ -436,7 +672,8 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
       due_offset_days: (item as any).due_offset_days === null || (item as any).due_offset_days === undefined ? "" : String((item as any).due_offset_days),
       deliverable_type: String((item as any).deliverable_type ?? ((item as any).has_deliverable === false ? "none" : "document")),
       deliverable_custom: String((item as any).deliverable_custom ?? ""),
-    });
+      priority: String((item as any).priority ?? "medium"),
+    } as any);
   };
 
   const saveEditModal = async () => {
@@ -451,36 +688,84 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
       return;
     }
 
-    await updateChecklistItem(editingTask.id, {
-      item_name: name,
-      description: editForm.description.trim() || null,
-      group_name: editForm.group_name.trim() || "General",
-      assignee_role: editForm.assignee_role.trim() || null,
-      assigned_to: editForm.assigned_to || null,
-      required: editForm.required,
-      due_offset_days: editForm.due_offset_days === "" ? null : Number(editForm.due_offset_days),
-      deliverable_type: editForm.deliverable_type,
-      deliverable_custom: editForm.deliverable_type === "custom" ? (editForm.deliverable_custom.trim() || null) : null,
-      has_deliverable: editForm.deliverable_type !== "none",
-    } as any);
+    try {
+      const payload: any = {
+        item_name: name,
+        description: editForm.description.trim() || null,
+        group_name: editForm.group_name.trim() || "General",
+        assignee_role: editForm.assignee_role.trim() || null,
+        assigned_to: editForm.assigned_to || null,
+        required: editForm.required,
+        due_offset_days: editForm.due_offset_days === "" ? null : Number(editForm.due_offset_days),
+        deliverable_type: editForm.deliverable_type,
+        deliverable_custom: editForm.deliverable_type === "custom" ? (editForm.deliverable_custom.trim() || null) : null,
+        has_deliverable: editForm.deliverable_type !== "none",
+        priority: (editForm as any).priority ?? "medium",
+      };
 
-    setEditingTask(null);
-    await onRefresh();
+      if (editingTask.id === "__new__") {
+        const groupName = creatingGroupName ?? editForm.group_name ?? "General";
+        const groupItems = groups[groupName] ?? [];
+        const maxPos = groupItems.length ? Math.max(...groupItems.map((i: any) => Number(i.position ?? 0))) : 0;
+        await createChecklistItem({
+          project_id: projectId,
+          item_name: payload.item_name,
+          description: payload.description,
+          group_name: payload.group_name,
+          assignee_role: payload.assignee_role,
+          assigned_to: payload.assigned_to,
+          required: payload.required,
+          due_offset_days: payload.due_offset_days,
+          has_deliverable: payload.has_deliverable,
+          deliverable_type: payload.deliverable_type,
+          deliverable_custom: payload.deliverable_custom,
+          position: maxPos + 1,
+          priority: payload.priority,
+        } as any);
+      } else {
+        await updateChecklistItem(editingTask.id, payload);
+      }
+
+      setEditingTask(null);
+      setCreatingGroupName(null);
+      await onRefresh();
+      alert("Task saved.");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to save task";
+      alert(`Could not save task: ${msg}`);
+    }
   };
 
   const handleCreateTask = async (groupName: string) => {
-    const groupItems = groups[groupName] ?? [];
-    const maxPos = groupItems.length ? Math.max(...groupItems.map((i: any) => Number(i.position ?? 0))) : 0;
-    await createChecklistItem({
+    setCreatingGroupName(groupName);
+    setEditingTask({
+      id: "__new__",
       project_id: projectId,
-      item_name: "New Checklist Task",
-      group_name: groupName,
+      item_name: "",
       required: true,
+      position: 0,
+      group_name: groupName,
       has_deliverable: true,
       deliverable_type: "document",
-      position: maxPos + 1,
-    });
-    await onRefresh();
+      deliverable_custom: null,
+      due_offset_days: null,
+      assignee_role: "",
+      assigned_to: "",
+      description: "",
+      checklist_completions: [],
+    } as any);
+    setEditForm({
+      item_name: "",
+      description: "",
+      group_name: groupName,
+      assignee_role: "",
+      assigned_to: "",
+      required: true,
+      due_offset_days: "",
+      deliverable_type: "document",
+      deliverable_custom: "",
+      priority: "medium",
+    } as any);
   };
 
   const handleCreateGroup = async () => {
@@ -524,6 +809,21 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-white p-3">
+        <p className="text-xs font-medium text-slate-600">Reminder Summaries</p>
+        <button onClick={() => triggerDigest("pending_approval")} disabled={digestSending}
+          title="Generate summary of checklist items waiting approval"
+          className="rounded border px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+          Generate Review Queue Summary
+        </button>
+        <button onClick={() => triggerDigest("assigned_digest")} disabled={digestSending}
+          title="Generate summary of assigned checklist items not yet approved"
+          className="rounded border px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+          Generate Assigned Work Summary
+        </button>
+        {digestMsg && <span className="text-xs text-slate-500">{digestMsg}</span>}
+      </div>
+
       {/* Summary bar */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-xl border bg-white p-3">
@@ -547,18 +847,61 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
         </div>
       </div>
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap gap-2">
-        {(["all", "pending", "submitted", "approved", "rejected"] as Filter[]).map((f) => (
-          <button key={f} onClick={() => setFilter(f)}
-            className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
-              filter === f ? "bg-slate-900 text-white" : "bg-white border text-slate-500 hover:text-slate-800"
-            }`}>
-            {f === "all" ? `All (${activeChecklist.length})` :
-             f === "submitted" ? `Pending (${activeChecklist.filter(i => getStatus(i) === "submitted").length})` :
-             `${f.charAt(0).toUpperCase() + f.slice(1)} (${activeChecklist.filter(i => getStatus(i) === f).length})`}
-          </button>
-        ))}
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => {
+            const next = getNextPendingRequired();
+            if (next) {
+              if (displayMode === "board") setDetailItemId(next.id);
+              else jumpToItem(next.id);
+            }
+          }}
+          className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+        >
+          Next pending item
+        </button>
+        <p className="text-xs text-slate-400">Opens the first required item that is not approved.</p>
+      </div>
+
+      {/* Filter/Search/View bar */}
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setDisplayMode("detailed")} className={`rounded-lg px-3 py-1.5 text-xs ${displayMode === "detailed" ? "bg-slate-900 text-white" : "border bg-white text-slate-600"}`}>Detailed</button>
+          <button onClick={() => setDisplayMode("table")} className={`rounded-lg px-3 py-1.5 text-xs ${displayMode === "table" ? "bg-slate-900 text-white" : "border bg-white text-slate-600"}`}>Compact Table</button>
+          <button onClick={() => setDisplayMode("board")} className={`rounded-lg px-3 py-1.5 text-xs ${displayMode === "board" ? "bg-slate-900 text-white" : "border bg-white text-slate-600"}`}>Board</button>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search title, notes, files" className="min-w-[220px] rounded-lg border px-3 py-1.5 text-xs" />
+          <button onClick={() => setPrioritySort((v) => !v)} className={`rounded-lg px-3 py-1.5 text-xs ${prioritySort ? "bg-indigo-100 text-indigo-700" : "border bg-white text-slate-600"}`}>Sort by Priority</button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {(["all", "pending", "submitted", "approved", "rejected"] as Filter[]).map((f) => (
+            <button key={f} onClick={() => setFilter(f)}
+              className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
+                filter === f ? "bg-slate-900 text-white" : "bg-white border text-slate-500 hover:text-slate-800"
+              }`}>
+              {f === "all" ? `All (${activeChecklist.length})` :
+               f === "submitted" ? `Pending (${activeChecklist.filter(i => getStatus(i) === "submitted").length})` :
+               `${f.charAt(0).toUpperCase() + f.slice(1)} (${activeChecklist.filter(i => getStatus(i) === f).length})`}
+            </button>
+          ))}
+          {([
+            ["mine", "My items"],
+            ["overdue", "Overdue"],
+            ["requires_file", "Requires file upload"],
+            ["waiting_approval", "Waiting for approval"],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setQuickFilters((prev) => {
+                const next = new Set(prev);
+                next.has(key as QuickFilter) ? next.delete(key as QuickFilter) : next.add(key as QuickFilter);
+                return next;
+              })}
+              className={`rounded-full px-3 py-1 text-xs ${quickFilters.has(key as QuickFilter) ? "bg-cyan-100 text-cyan-700" : "border bg-white text-slate-600"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {canSubmit && (
@@ -578,8 +921,137 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
         </div>
       )}
 
-      {/* Groups */}
-      {Object.entries(groups).map(([groupName, items]) => {
+      <div className="text-xs text-slate-400">
+        Visible items in current filter: {filtered(activeChecklist).length} / {activeChecklist.length}
+      </div>
+
+      {displayMode === "board" ? (
+        <div className="grid gap-3 lg:grid-cols-4">
+          {([
+            ["pending", "To Do"],
+            ["submitted", "Pending Approval"],
+            ["approved", "Approved"],
+            ["rejected", "Rejected"],
+          ] as const).map(([statusKey, title]) => {
+            const colItems = filtered(activeChecklist).filter((i) => getStatus(i) === statusKey);
+            return (
+              <div
+                key={statusKey}
+                className={`rounded-xl border bg-white transition ${dropTargetStatus === statusKey ? "ring-2 ring-cyan-300 border-cyan-300" : ""}`}
+                onDragOver={(e) => { e.preventDefault(); setDropTargetStatus(statusKey); }}
+                onDragLeave={() => setDropTargetStatus((prev) => (prev === statusKey ? null : prev))}
+                onDrop={async (e) => {
+                  e.preventDefault();
+                  if (!dragItemId) return;
+                  const dragging = activeChecklist.find((i) => i.id === dragItemId);
+                  if (!dragging) return;
+                  await moveBoardItem(dragging, statusKey);
+                  setDragItemId(null);
+                  setDropTargetStatus(null);
+                }}
+              >
+                <div className="border-b px-3 py-2">
+                  <p className="text-sm font-semibold text-slate-700">{title} <span className="text-xs text-slate-400">({colItems.length})</span></p>
+                </div>
+                <div className="space-y-2 p-2">
+                  {colItems.map((item: any) => {
+                    const completion = getCompletion(item);
+                    const priority = String(item.priority ?? "medium");
+                    return (
+                      <div
+                        key={item.id}
+                        className={`rounded-lg border p-2 ${dragItemId === item.id ? "opacity-60" : ""} ${highlightItemId === item.id ? "ring-2 ring-amber-300" : ""}`}
+                        draggable
+                        onDragStart={() => setDragItemId(item.id)}
+                        onDragEnd={() => setDragItemId(null)}
+                      >
+                        <button onClick={() => setDetailItemId(item.id)} className="w-full text-left">
+                          <p className="text-sm font-medium text-slate-800">{item.item_name}</p>
+                          <div className="mt-1 flex flex-wrap gap-1 text-xs">
+                            <span className={`rounded-full px-2 py-0.5 ${PRIORITY_PILL[priority] ?? PRIORITY_PILL.medium}`}>{priority}</span>
+                            {item.required && <span className="rounded bg-red-50 px-1.5 py-0.5 text-red-600">Required</span>}
+                            {(completion?.file_names?.length ?? 0) > 0 && <span className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-600">📎 {completion.file_names.length}</span>}
+                          </div>
+                        </button>
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {(["pending", "submitted", "approved", "rejected"] as const).filter((s) => s !== statusKey).map((s) => (
+                            <button key={s} onClick={() => moveBoardItem(item, s)} className="rounded border px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50">→ {s}</button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {colItems.length === 0 && <div className="rounded-lg border border-dashed p-3 text-center text-xs text-slate-400">No items</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : displayMode === "table" ? (
+        <div className="overflow-hidden rounded-xl border bg-white">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3">Item Name</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Assignee</th>
+                <th className="px-4 py-3">Due Date</th>
+                <th className="px-4 py-3">Priority</th>
+                <th className="px-4 py-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {filtered(activeChecklist).map((item: any) => {
+                const status = getStatus(item);
+                const completion = getCompletion(item);
+                const priority = String(item.priority ?? "medium");
+                return (
+                  <tr key={item.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-medium">
+                      <input
+                        defaultValue={item.item_name}
+                        onBlur={(e) => e.target.value.trim() && handleQuickEdit(item, { item_name: e.target.value.trim() })}
+                        className="w-full rounded border px-2 py-1 text-sm"
+                      />
+                    </td>
+                    <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_CONFIG[status].color}`}>{STATUS_CONFIG[status].label}</span></td>
+                    <td className="px-4 py-3 text-xs text-slate-600">{item.assigned_to ? (teamMembers.find((u) => u.id === item.assigned_to)?.full_name ?? item.assignee_role) : (item.assignee_role ?? "—")}</td>
+                    <td className="px-4 py-3 text-xs">{dueDateLabel(item.due_offset_days)}</td>
+                    <td className="px-4 py-3">
+                      <select value={priority} onChange={(e) => handleQuickEdit(item, { priority: e.target.value as any })}
+                        className={`rounded-full px-2 py-0.5 text-xs ${PRIORITY_PILL[priority] ?? PRIORITY_PILL.medium}`}>
+                        {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1">
+                        {isAdmin && status === "submitted" && <button onClick={() => handleApprove(item)} className="rounded border px-2 py-1 text-xs text-green-700">Approve</button>}
+                        {isAdmin && status === "submitted" && <button onClick={() => { setRejectingId(item.id); setExpandedItem(item.id); }} className="rounded border px-2 py-1 text-xs text-red-700">Reject</button>}
+                        {(item.has_deliverable !== false) && status !== "approved" && status !== "submitted" && canSubmit && <button onClick={() => setExpandedItem(item.id)} className="rounded border px-2 py-1 text-xs text-blue-700">Add file</button>}
+                        <button onClick={() => openEditModal(item)} className="rounded border px-2 py-1 text-xs text-slate-600">Comment/Edit</button>
+                      </div>
+                      <div className="mt-1 flex gap-1">
+                        <input
+                          value={commentDrafts[item.id] ?? ""}
+                          onChange={(e) => setCommentDrafts((prev) => ({ ...prev, [item.id]: e.target.value }))}
+                          placeholder="Quick comment"
+                          className="w-40 rounded border px-2 py-1 text-xs"
+                        />
+                        <button onClick={() => saveInlineComment(item)} className="rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">Save</button>
+                      </div>
+                      {(completion?.file_names?.length ?? 0) > 0 && (
+                        <p className="mt-1 text-xs text-slate-500">📎 {completion.file_names[0]}</p>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+      /* Groups */
+      Object.entries(groups).map(([groupName, items]) => {
         const visibleItems = filtered(items);
         if (visibleItems.length === 0 && filter !== "all") return null;
         const gp = groupProgress(items);
@@ -669,13 +1141,13 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                   const dueOffset = (item as any).due_offset_days;
 
                   return (
-                    <div key={item.id} className={`transition ${
+                    <div id={`check-item-${item.id}`} key={item.id} className={`transition ${highlightItemId === item.id ? "ring-2 ring-amber-300" : ""} ${
                       status === "approved" ? "bg-green-50/40" :
                       status === "rejected" ? "bg-red-50/40" :
                       status === "submitted" ? "bg-amber-50/40" : ""
                     }`}>
                       {/* Item row */}
-                      <div className="flex items-center gap-3 px-4 py-3 cursor-pointer"
+                      <div className="group flex items-center gap-3 px-4 py-3 cursor-pointer"
                         onClick={() => setExpandedItem(isExpanded ? null : item.id)}>
                         {/* Status dot */}
                         <div className={`h-3 w-3 flex-shrink-0 rounded-full ${cfg.dot}`} />
@@ -712,7 +1184,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                         </div>
 
                         {/* Action buttons */}
-                        <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100" onClick={(e) => e.stopPropagation()}>
                           {/* Assign team member */}
                           {canSubmit && (
                             <select
@@ -750,7 +1222,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                           )}
                           {/* Submit for approval */}
                           {hasDeliverable && status !== "approved" && status !== "submitted" && canSubmit && (
-                            <button onClick={() => setExpandedItem(item.id)}
+                            <button onClick={() => setShowSubmitModalFor(item.id)}
                               className="rounded-lg border border-blue-300 px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50">
                               Submit ↑
                             </button>
@@ -758,13 +1230,9 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                           {/* Admin approve/reject */}
                           {isAdmin && status === "submitted" && (
                             <>
-                              <button onClick={() => handleApprove(item)}
+                              <button onClick={() => setShowReviewModalFor(item.id)}
                                 className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700">
-                                ✓ Approve
-                              </button>
-                              <button onClick={() => { setRejectingId(item.id); setExpandedItem(item.id); }}
-                                className="rounded-lg bg-red-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600">
-                                ✗ Reject
+                                ✓ Approve/Reject
                               </button>
                             </>
                           )}
@@ -813,10 +1281,16 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                             <div className="space-y-2 pt-2 border-t">
                               <FileUpload
                                 artistId={artistId}
+                                multiple
                                 label={DELIVERABLE_SPEC[item.item_name]?.label ?? "Upload Deliverable"}
                                 accept={DELIVERABLE_SPEC[item.item_name]?.accept}
                                 hint={DELIVERABLE_SPEC[item.item_name]?.hint ?? "Upload the required deliverable for this checklist item"}
                                 onUploaded={(url, name) => setUploadedFiles((f) => [...f, { url, name }])}
+                                onUploadedMany={(files) => {
+                                  bulkMatchFilesToItems(files);
+                                  // still add files for current item by default
+                                  setUploadedFiles((f) => [...f, ...files]);
+                                }}
                               />
                               {uploadedFiles.length > 0 && (
                                 <div className="flex flex-wrap gap-1">
@@ -836,6 +1310,32 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                                 className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50">
                                 {submittingId === item.id ? "Submitting…" : "Request Approval ↑"}
                               </button>
+                            </div>
+                          )}
+
+                          {Object.keys(bulkCandidateMap).length > 0 && (
+                            <div className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs">
+                              <p className="mb-1 font-medium text-cyan-800">Bulk upload auto-match suggestions</p>
+                              <div className="space-y-1 text-cyan-700">
+                                {Object.entries(bulkCandidateMap).slice(0, 10).map(([fname, itemId]) => {
+                                  const target = activeChecklist.find((i) => i.id === itemId) as any;
+                                  return (
+                                    <div key={fname} className="flex items-center justify-between gap-2">
+                                      <span>📎 {fname}</span>
+                                      <select
+                                        value={itemId}
+                                        onChange={(e) => setBulkCandidateMap((prev) => ({ ...prev, [fname]: e.target.value }))}
+                                        className="rounded border px-1 py-0.5 text-[11px]"
+                                      >
+                                        {activeChecklist.map((i: any) => <option key={i.id} value={i.id}>{i.item_name}</option>)}
+                                      </select>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="mt-2 flex justify-end">
+                                <button onClick={applyBulkMatches} className="rounded border px-2 py-1 text-xs text-cyan-800 hover:bg-cyan-100">Apply matches</button>
+                              </div>
                             </div>
                           )}
 
@@ -866,7 +1366,8 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
             )}
           </div>
         );
-      })}
+      })
+      )}
 
       {showArchived && (
         <div className="rounded-xl border bg-white p-4">
@@ -888,6 +1389,193 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {detailItemId && (() => {
+        const item = activeChecklist.find((i) => i.id === detailItemId) as any;
+        const completion = item ? getCompletion(item) : null;
+        if (!item) return null;
+        const isMobile = typeof window !== "undefined" ? window.innerWidth < 768 : false;
+        return (
+          <div className={isMobile ? "fixed inset-x-0 bottom-0 z-50 flex w-full max-h-[75vh] flex-col overflow-hidden rounded-t-2xl border-t bg-white shadow-2xl" : "fixed inset-y-0 right-0 z-50 flex h-screen w-full max-w-md flex-col border-l bg-white shadow-2xl"}>
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <h4 className="font-semibold text-slate-800">Checklist Details</h4>
+              <button onClick={() => setDetailItemId(null)} className="rounded border px-2 py-1 text-xs text-slate-600">Close</button>
+            </div>
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-sm overscroll-contain">
+              <div>
+                <p className="text-xs text-slate-500">Title</p>
+                <p className="font-medium text-slate-800">{item.item_name}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Description</p>
+                <p className="text-slate-700">{item.description || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Status</p>
+                <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_CONFIG[getStatus(item)].color}`}>{STATUS_CONFIG[getStatus(item)].label}</span>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Due</p>
+                <div>{dueDateLabel(item.due_offset_days)}</div>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Comments/Notes</p>
+                <p className="text-slate-700">{completion?.notes || "No notes yet."}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Files</p>
+                <div className="space-y-1">
+                  {(completion?.file_names ?? []).length === 0 && <p className="text-slate-400">No files uploaded.</p>}
+                  {(completion?.file_names ?? []).map((n: string, i: number) => (
+                    <a key={i} href={completion.file_urls?.[i]} target="_blank" rel="noopener noreferrer" className="block rounded border px-2 py-1 text-blue-600 hover:bg-blue-50">📎 {n}</a>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Approval History</p>
+                <ul className="list-disc pl-5 text-slate-600">
+                  <li>Status: {getStatus(item)}</li>
+                  <li>Submitted: {completion?.completed_at ? new Date(completion.completed_at).toLocaleString() : "—"}</li>
+                  <li>Approved: {completion?.approved_at ? new Date(completion.approved_at).toLocaleString() : "—"}</li>
+                </ul>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Activity timeline</p>
+                <div className="mt-1 space-y-1 text-xs text-slate-600">
+                  <div className="rounded bg-slate-50 px-2 py-1">Created checklist item</div>
+                  {completion?.completed_at && <div className="rounded bg-amber-50 px-2 py-1">Submitted: {new Date(completion.completed_at).toLocaleString()}</div>}
+                  {completion?.approved_at && <div className="rounded bg-green-50 px-2 py-1">Approved: {new Date(completion.approved_at).toLocaleString()}</div>}
+                  {completion?.rejection_reason && <div className="rounded bg-red-50 px-2 py-1">Rejected: {completion.rejection_reason}</div>}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Global recent activity</p>
+                <div className="mt-1 space-y-1 text-xs text-slate-600">
+                  {activeChecklist.slice(0, 8).map((it: any) => {
+                    const c = getCompletion(it);
+                    if (!c) return null;
+                    return (
+                      <div key={it.id} className="rounded border px-2 py-1">
+                        <p className="font-medium text-slate-700">{it.item_name}</p>
+                        <p className="text-slate-500">{(c.approval_status ?? "pending").toUpperCase()} · {c.completed_at ? new Date(c.completed_at).toLocaleString() : "—"}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Quick Actions</p>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {isAdmin && getStatus(item) === "submitted" && <button onClick={() => handleApprove(item)} className="rounded border px-2 py-1 text-xs text-green-700">Approve</button>}
+                  {isAdmin && getStatus(item) === "submitted" && <button onClick={() => { setRejectingId(item.id); setExpandedItem(item.id); }} className="rounded border px-2 py-1 text-xs text-red-700">Reject</button>}
+                  {canSubmit && <button onClick={() => openEditModal(item)} className="rounded border px-2 py-1 text-xs text-slate-600">Edit</button>}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {showSubmitModalFor && (() => {
+        const item = activeChecklist.find((i) => i.id === showSubmitModalFor) as any;
+        if (!item) return null;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+              <h3 className="mb-3 text-lg font-semibold">Submit for Approval</h3>
+              <p className="mb-2 text-sm text-slate-600">{item.item_name}</p>
+              <p className="mb-3 text-xs text-slate-500">Files selected: {uploadedFiles.length}</p>
+              <textarea value={submitNotes} rows={3} onChange={(e) => setSubmitNotes(e.target.value)} placeholder="Optional note to approver" className="w-full rounded-lg border px-3 py-2 text-sm" />
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => setShowSubmitModalFor(null)} className="rounded-lg border px-4 py-2 text-sm text-slate-600">Cancel</button>
+                <button
+                  onClick={async () => {
+                    await handleSubmit(item);
+                    try {
+                      await triggerDigest("pending_approval");
+                    } catch {
+                      // non-blocking reminder hook
+                    }
+                    setShowSubmitModalFor(null);
+                  }}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+                >
+                  Request Approval
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {showReviewModalFor && (() => {
+        const item = activeChecklist.find((i) => i.id === showReviewModalFor) as any;
+        if (!item) return null;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+              <h3 className="mb-3 text-lg font-semibold">Review Submission</h3>
+              <p className="mb-2 text-sm text-slate-600">{item.item_name}</p>
+              <textarea value={rejectReason} rows={3} onChange={(e) => setRejectReason(e.target.value)} placeholder="Reason (required for reject)" className="w-full rounded-lg border px-3 py-2 text-sm" />
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => setShowReviewModalFor(null)} className="rounded-lg border px-4 py-2 text-sm text-slate-600">Cancel</button>
+                <button onClick={async () => { await handleApprove(item); setShowReviewModalFor(null); }} className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white">Approve</button>
+                <button onClick={async () => { if (!rejectReason.trim()) return alert("Enter rejection reason"); await handleReject(item); setShowReviewModalFor(null); }} className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white">Reject</button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {digestPanelOpen && (
+        <div className="fixed inset-y-0 right-0 z-50 flex h-screen w-full max-w-md flex-col border-l bg-white shadow-2xl">
+          <div className="flex items-center justify-between border-b px-4 py-3">
+            <div>
+              <h4 className="font-semibold text-slate-800">{digestPanelKind === "pending_approval" ? "Review Queue Summary" : "Assigned Work Summary"}</h4>
+              <p className="text-xs text-slate-500">{digestGeneratedAt ? new Date(digestGeneratedAt).toLocaleString() : "Just now"} · {digestPanelItems.length} item(s)</p>
+            </div>
+            <button onClick={() => setDigestPanelOpen(false)} className="rounded border px-2 py-1 text-xs text-slate-600">Close</button>
+          </div>
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4 text-sm overscroll-contain">
+            {digestPanelItems.length === 0 && (
+              <div className="rounded-lg border border-dashed p-4 text-center text-xs text-slate-400">No items matched this summary right now.</div>
+            )}
+            {digestPanelItems.map((it: any) => {
+              const assignee = teamMembers.find((u) => String(u.id) === String(it.assigned_to));
+              return (
+                <div key={String(it.id)} className="rounded-lg border p-3">
+                  <p className="font-medium text-slate-800">{it.title}</p>
+                  <div className="mt-1 space-y-0.5 text-xs text-slate-500">
+                    <p>Status: {String(it.status ?? "pending")}</p>
+                    <p>Assignee: {assignee?.full_name ?? it.assignee_role ?? "Unassigned"}</p>
+                    <p>Due: {it.due_offset_days ?? "—"} days offset</p>
+                  </div>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      onClick={() => {
+                        setDigestPanelOpen(false);
+                        setDetailItemId(String(it.id));
+                      }}
+                      className="rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                    >
+                      Open item
+                    </button>
+                    <button
+                      onClick={() => {
+                        setDigestPanelOpen(false);
+                        jumpToItem(String(it.id));
+                      }}
+                      className="rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                    >
+                      Jump in checklist
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -932,6 +1620,12 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                 </select>
               </div>
               <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Priority</label>
+                <select value={String((editForm as any).priority ?? "medium")} onChange={(e) => setEditForm((p: any) => ({ ...p, priority: e.target.value }))} className="w-full rounded-lg border px-3 py-2 text-sm">
+                  {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select>
+              </div>
+              <div>
                 <label className="mb-1 block text-xs font-medium text-slate-600">Deliverable type</label>
                 <select value={editForm.deliverable_type} onChange={(e) => setEditForm((p) => ({ ...p, deliverable_type: e.target.value }))} className="w-full rounded-lg border px-3 py-2 text-sm">
                   {DELIVERABLE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
@@ -945,7 +1639,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
               )}
             </div>
             <div className="mt-5 flex justify-end gap-2">
-              <button onClick={() => setEditingTask(null)} className="rounded-lg border px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button onClick={() => { setEditingTask(null); setCreatingGroupName(null); }} className="rounded-lg border px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
               <button onClick={saveEditModal} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">Save changes</button>
             </div>
           </div>

@@ -1,12 +1,19 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../context/auth-store";
 
 export function LoginPage() {
-  const { signIn } = useAuthStore();
+  const navigate = useNavigate();
+  const { signIn, user } = useAuthStore();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (user) navigate("/", { replace: true });
+  }, [user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -14,6 +21,8 @@ export function LoginPage() {
     setLoading(true);
     try {
       await signIn(email, password);
+      setSuccess("Login successful. Redirecting to dashboard...");
+      navigate("/", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
     } finally {
@@ -47,6 +56,7 @@ export function LoginPage() {
             />
           </div>
           {error && <p className="text-sm text-red-600">{error}</p>}
+          {success && <p className="text-sm text-green-600">{success}</p>}
           <button
             type="submit"
             disabled={loading}

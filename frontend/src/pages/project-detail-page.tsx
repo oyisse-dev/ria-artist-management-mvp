@@ -30,6 +30,7 @@ export function ProjectDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [tab, setTab] = useState<Tab>("checklist");
+  const [focusStatus, setFocusStatus] = useState<"all" | "pending" | "submitted" | "approved" | "rejected" | null>(null);
 
   // Transaction modal
   const [showTxModal, setShowTxModal] = useState(false);
@@ -62,7 +63,7 @@ export function ProjectDetailPage() {
 
       const checklistRes = results[0];
       if (checklistRes.status === "fulfilled") setChecklist(checklistRes.value as ChecklistItem[]);
-      else sectionErrors.push("checklist");
+      else sectionErrors.push(`checklist (${checklistRes.reason?.message ?? "query failed"})`);
 
       const txRes = results[1];
       if (txRes.status === "fulfilled") setTransactions((txRes.value as any).data ?? []);
@@ -146,12 +147,121 @@ export function ProjectDetailPage() {
   const progress = calcProgress(checklist);
   const completedCount = checklist.filter((i: any) => getCompletion(i)?.approval_status === "approved").length;
   const pendingApproval = checklist.filter((i: any) => getCompletion(i)?.approval_status === "submitted").length;
+  const rejectedChecklist = checklist.filter((i: any) => getCompletion(i)?.approval_status === "rejected").length;
+  const todoChecklist = Math.max(0, checklist.length - completedCount - pendingApproval - rejectedChecklist);
+
+  const milestoneDays = Array.from({ length: 28 }, (_, idx) => {
+    const d = new Date();
+    d.setDate(d.getDate() + idx);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const iso = `${yyyy}-${mm}-${dd}`;
+
+    const dueItems = checklist.filter((item: any) => {
+      const offset = item?.due_offset_days;
+      if (offset === undefined || offset === null || !project?.target_date) return false;
+      const due = new Date(project.target_date);
+      due.setDate(due.getDate() + Number(offset));
+      const dueIso = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, "0")}-${String(due.getDate()).padStart(2, "0")}`;
+      return dueIso === iso;
+    });
+
+    return { iso, count: dueItems.length, items: dueItems };
+  });
+
+  const upcomingMilestones = milestoneDays.filter((d) => d.count > 0).slice(0, 5);
+  const maxDue = Math.max(1, ...milestoneDays.map((d) => d.count));
+  const totalStatus = Math.max(1, checklist.length);
+  const approvedPct = Math.round((completedCount / totalStatus) * 100);
+  const pendingPct = Math.round((pendingApproval / totalStatus) * 100);
+  const rejectedPct = Math.round((rejectedChecklist / totalStatus) * 100);
+  const donut = `conic-gradient(#16a34a 0 ${approvedPct}%, #f59e0b ${approvedPct}% ${approvedPct + pendingPct}%, #ef4444 ${approvedPct + pendingPct}% ${approvedPct + pendingPct + rejectedPct}%, #334155 ${approvedPct + pendingPct + rejectedPct}% 100%)`;
+
+  const prevWindow = milestoneDays.slice(0, 7).reduce((acc, d) => acc + d.count, 0);
+  const nextWindow = milestoneDays.slice(7, 14).reduce((acc, d) => acc + d.count, 0);
+  const trend = nextWindow > prevWindow ? "up" : nextWindow < prevWindow ? "down" : "flat";
 
   const txSummary = transactions.reduce((acc: { income: number; expense: number }, tx: any) => {
     if (tx.type === "income") acc.income += Number(tx.amount);
     else acc.expense += Number(tx.amount);
     return acc;
   }, { income: 0, expense: 0 });
+
+  const userById = new Map(teamMembers.map((u: any) => [String(u.id), u]));
+  const workload = assignments.map((a: any) => {
+    const member = a.users;
+    const items = checklist.filter((c: any) => String(c.assigned_to ?? "") === String(member?.id ?? ""));
+    const approved = items.filter((i: any) => getCompletion(i)?.approval_status === "approved").length;
+    const submitted = items.filter((i: any) => getCompletion(i)?.approval_status === "submitted").length;
+    const pending = items.length - approved - submitted;
+    return {
+      id: member?.id,
+      name: member?.full_name,
+      role: member?.role,
+      total: items.length,
+      approved,
+      submitted,
+      pending,
+      loadScore: pending * 2 + submitted,
+    };
+  }).sort((a, b) => b.loadScore - a.loadScore);
+
+  const keywordPool = (text: string) => text.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3);
+  const checklistFinanceLinks = checklist.map((item: any) => {
+    const words = new Set(keywordPool(`${item.item_name} ${item.description ?? ""}`));
+    const matchedTx = transactions.filter((tx: any) => {
+      const hay = `${tx.category ?? ""} ${tx.notes ?? ""} ${tx.description ?? ""}`.toLowerCase();
+      let score = 0;
+      words.forEach((w) => { if (hay.includes(w)) score += 1; });
+      return score > 0;
+    });
+    const spend = matchedTx.reduce((sum: number, tx: any) => sum + (tx.type === "expense" ? Number(tx.amount) : 0), 0);
+    return {
+      id: item.id,
+      item_name: item.item_name,
+      status: getCompletion(item)?.approval_status ?? "pending",
+      matchedCount: matchedTx.length,
+      spend,
+    };
+  }).filter((r) => r.matchedCount > 0 || r.spend > 0);
+
+  const checklistAuditFeed = checklist.flatMap((item: any) => {
+    const c = getCompletion(item);
+    if (!c) return [] as any[];
+    const events: any[] = [];
+    if (c.completed_at) {
+      const user = userById.get(String(c.completed_by ?? ""));
+      events.push({
+        at: c.completed_at,
+        type: "SUBMITTED",
+        item: item.item_name,
+        by: user?.full_name ?? "Team member",
+        detail: c.notes || "Submitted for approval",
+      });
+    }
+    if (c.approved_at && c.approval_status === "approved") {
+      const approver = userById.get(String(c.approver_id ?? ""));
+      events.push({
+        at: c.approved_at,
+        type: "APPROVED",
+        item: item.item_name,
+        by: approver?.full_name ?? "Approver",
+        detail: "Approved",
+      });
+    }
+    if (c.approval_status === "rejected") {
+      const approver = userById.get(String(c.approver_id ?? ""));
+      events.push({
+        at: c.approved_at ?? c.completed_at ?? new Date().toISOString(),
+        type: "REJECTED",
+        item: item.item_name,
+        by: approver?.full_name ?? "Approver",
+        detail: c.rejection_reason || "Rejected",
+      });
+    }
+    return events;
+  }).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 
   const tabs: { key: Tab; label: string }[] = [
     { key: "checklist", label: `Checklist (${completedCount}/${checklist.length})` },
@@ -231,6 +341,73 @@ export function ProjectDetailPage() {
         </div>
       </div>
 
+      {/* Milestone Analytics */}
+      <div className="grid gap-3 lg:grid-cols-3">
+        <div className="rounded-xl border bg-white p-4">
+          <p className="text-sm font-medium text-slate-700">Checklist Status Mix</p>
+          <div className="mt-3 flex items-center gap-4">
+            <button
+              onClick={() => { setTab("checklist"); setFocusStatus("all"); }}
+              className="relative h-24 w-24 rounded-full"
+              style={{ background: donut }}
+              title="Click to open checklist"
+            >
+              <div className="absolute inset-3 rounded-full bg-white" />
+              <div className="absolute inset-0 flex items-center justify-center text-xs font-semibold text-slate-700">{progress}%</div>
+            </button>
+            <div className="space-y-1 text-xs">
+              <button onClick={() => { setTab("checklist"); setFocusStatus("approved"); }} className="block text-left"><span className="inline-block h-2 w-2 rounded-full bg-green-600" /> <span className="ml-1">Approved: {completedCount}</span></button>
+              <button onClick={() => { setTab("checklist"); setFocusStatus("submitted"); }} className="block text-left"><span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> <span className="ml-1">Pending: {pendingApproval}</span></button>
+              <button onClick={() => { setTab("checklist"); setFocusStatus("rejected"); }} className="block text-left"><span className="inline-block h-2 w-2 rounded-full bg-red-500" /> <span className="ml-1">Rejected: {rejectedChecklist}</span></button>
+              <button onClick={() => { setTab("checklist"); setFocusStatus("pending"); }} className="block text-left"><span className="inline-block h-2 w-2 rounded-full bg-slate-500" /> <span className="ml-1">To Do: {todoChecklist}</span></button>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border bg-white p-4 lg:col-span-2">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-medium text-slate-700">Milestone Timeline (next 28 days)</p>
+            <p className="text-xs text-slate-400">Interactive bars · hover for tasks</p>
+          </div>
+          <div className="mb-2 flex items-center gap-2 text-xs">
+            <span className="rounded border px-2 py-0.5 text-slate-600">Trend:</span>
+            {trend === "up" && <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">↑ More upcoming load (next 7d)</span>}
+            {trend === "down" && <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-700">↓ Lower upcoming load (next 7d)</span>}
+            {trend === "flat" && <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">→ Stable load</span>}
+          </div>
+          <div className="space-y-1.5">
+            {milestoneDays.map((d) => {
+              const width = `${Math.max(2, Math.round((d.count / maxDue) * 100))}%`;
+              const label = d.items.map((i: any) => i.item_name).slice(0, 3).join(", ");
+              return (
+                <div key={d.iso} className="group">
+                  <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                    <span className="w-20 shrink-0">{d.iso.slice(5)}</span>
+                    <div className="h-2 flex-1 rounded bg-slate-100">
+                      <div title={`${d.iso} • ${d.count} due${label ? ` • ${label}` : ""}`} className={`h-2 rounded transition-all ${d.count > 0 ? "bg-slate-700 group-hover:bg-indigo-600" : "bg-slate-200"}`} style={{ width }} />
+                    </div>
+                    <span className="w-10 text-right">{d.count}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-xl border bg-white p-4 lg:col-span-3">
+          <p className="mb-2 text-xs font-medium text-slate-600">Upcoming Milestones</p>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+            {upcomingMilestones.length === 0 && <p className="text-xs text-slate-400">No upcoming checklist due dates in next 28 days.</p>}
+            {upcomingMilestones.map((m) => (
+              <div key={m.iso} className="rounded-lg border p-2 text-xs">
+                <p className="font-semibold text-slate-700">{m.iso}</p>
+                <p className="text-slate-500">{m.count} due item{m.count > 1 ? "s" : ""}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* Tabs */}
       <div className="flex gap-1 overflow-x-auto border-b">
         {tabs.map((t) => (
@@ -252,6 +429,7 @@ export function ProjectDetailPage() {
           projectId={project.id}
           artistId={project.artist_id}
           targetDate={project.target_date}
+          focusStatus={focusStatus}
           teamMembers={assignments
             .map((a: any) => a.users)
             .filter(Boolean)
@@ -289,6 +467,26 @@ export function ProjectDetailPage() {
               </button>
             </div>
           )}
+          {checklistFinanceLinks.length > 0 && (
+            <div className="rounded-xl border bg-white p-4">
+              <p className="mb-3 text-sm font-semibold text-slate-700">Checklist ↔ Finance Linkage (heuristic)</p>
+              <div className="space-y-2">
+                {checklistFinanceLinks.slice(0, 12).map((row) => (
+                  <div key={row.id} className="flex items-center justify-between rounded border px-3 py-2 text-xs">
+                    <div>
+                      <p className="font-medium text-slate-700">{row.item_name}</p>
+                      <p className="text-slate-500">{row.matchedCount} related transaction{row.matchedCount > 1 ? "s" : ""}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-semibold text-slate-700">UGX {Number(row.spend).toLocaleString()}</p>
+                      <p className="text-slate-400">status: {row.status}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="overflow-hidden rounded-xl border bg-white">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -321,6 +519,30 @@ export function ProjectDetailPage() {
               No team members assigned to this artist yet. Go to the artist profile to assign team members.
             </div>
           )}
+
+          {workload.length > 0 && (
+            <div className="rounded-xl border bg-white p-4">
+              <p className="mb-3 text-sm font-semibold text-slate-700">Checklist Workload Indicators</p>
+              <div className="space-y-2">
+                {workload.map((w) => {
+                  const barMax = Math.max(1, ...workload.map((x) => x.total));
+                  const width = `${Math.round((w.total / barMax) * 100)}%`;
+                  return (
+                    <div key={w.id} className="rounded-lg border p-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <p className="font-medium text-slate-700">{w.name} <span className="text-slate-400">({w.role})</span></p>
+                        <p className="text-slate-500">{w.total} items • {w.pending} pending • {w.submitted} awaiting</p>
+                      </div>
+                      <div className="mt-1 h-2 rounded bg-slate-100">
+                        <div className={`h-2 rounded ${w.loadScore >= 8 ? "bg-red-500" : w.loadScore >= 4 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {assignments.map((a: any) => (
             <div key={a.user_id} className="flex items-center gap-3 rounded-xl border bg-white p-4">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-sm font-bold text-slate-600">
@@ -339,7 +561,25 @@ export function ProjectDetailPage() {
       )}
 
       {tab === "audit" && (
-        <div className="overflow-hidden rounded-xl border bg-white">
+        <div className="space-y-3">
+          {checklistAuditFeed.length > 0 && (
+            <div className="rounded-xl border bg-white p-4">
+              <p className="mb-3 text-sm font-semibold text-slate-700">Live Approval Feed</p>
+              <div className="space-y-2">
+                {checklistAuditFeed.slice(0, 15).map((evt: any, idx: number) => (
+                  <div key={`${evt.at}-${idx}`} className="rounded border px-3 py-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <p className="font-medium text-slate-700">{evt.type} · {evt.item}</p>
+                      <p className="text-slate-400">{new Date(evt.at).toLocaleString()}</p>
+                    </div>
+                    <p className="text-slate-500">by {evt.by} — {evt.detail}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="overflow-hidden rounded-xl border bg-white">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
               <tr>
@@ -368,6 +608,7 @@ export function ProjectDetailPage() {
               ))}
             </tbody>
           </table>
+        </div>
         </div>
       )}
 
