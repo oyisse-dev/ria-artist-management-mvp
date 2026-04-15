@@ -1,6 +1,14 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
-import { submitChecklistCompletion, approveChecklistItem, type ChecklistItem } from "../lib/projects-api";
+import {
+  submitChecklistCompletion,
+  approveChecklistItem,
+  updateChecklistItem,
+  createChecklistItem,
+  archiveChecklistItem,
+  restoreChecklistItem,
+  type ChecklistItem,
+} from "../lib/projects-api";
 import { FileUpload } from "./file-upload";
 import { useAuthStore } from "../context/auth-store";
 
@@ -14,6 +22,7 @@ interface Props {
 }
 
 type Filter = "all" | "pending" | "submitted" | "approved" | "rejected";
+const DELIVERABLE_TYPES = ["audio", "artwork", "document", "video", "link", "none", "custom"] as const;
 
 const GROUP_ICONS: Record<string, string> = {
   "Pre-Production": "🎯",
@@ -154,9 +163,21 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [submittingId, setSubmittingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [showArchived, setShowArchived] = useState(false);
+  const [newGroupName, setNewGroupName] = useState("");
+
+  const activeChecklist = checklist.filter((i: any) => !i.archived_at);
+  const archivedChecklist = checklist.filter((i: any) => !!i.archived_at);
 
   // Group items
-  const groups = checklist.reduce((acc, item) => {
+  const groups = activeChecklist.reduce((acc, item) => {
+    const g = (item as any).group_name ?? "General";
+    if (!acc[g]) acc[g] = [];
+    acc[g].push(item);
+    return acc;
+  }, {} as Record<string, ChecklistItem[]>);
+
+  const archivedGroups = archivedChecklist.reduce((acc, item) => {
     const g = (item as any).group_name ?? "General";
     if (!acc[g]) acc[g] = [];
     acc[g].push(item);
@@ -180,9 +201,9 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     return { approved, total: items.length, pct: items.length ? Math.round((approved / items.length) * 100) : 0 };
   };
 
-  const totalProgress = groupProgress(checklist);
-  const pendingApprovalCount = checklist.filter((i) => getStatus(i) === "submitted").length;
-  const rejectedCount = checklist.filter((i) => getStatus(i) === "rejected").length;
+  const totalProgress = groupProgress(activeChecklist);
+  const pendingApprovalCount = activeChecklist.filter((i) => getStatus(i) === "submitted").length;
+  const rejectedCount = activeChecklist.filter((i) => getStatus(i) === "rejected").length;
 
   const toggleGroup = (g: string) => {
     setCollapsedGroups((prev) => {
@@ -371,6 +392,55 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     return <span className="text-slate-500">📅 Due {label}</span>;
   };
 
+  const handleArchive = async (item: ChecklistItem) => {
+    if (!canSubmit) return;
+    if (!confirm(`Archive "${item.item_name}"? You can restore it later from Archive.`)) return;
+    await archiveChecklistItem(item.id);
+    await onRefresh();
+  };
+
+  const handleRestore = async (item: ChecklistItem) => {
+    if (!canSubmit) return;
+    await restoreChecklistItem(item.id);
+    await onRefresh();
+  };
+
+  const handleQuickEdit = async (item: ChecklistItem, updates: Partial<ChecklistItem>) => {
+    await updateChecklistItem(item.id, updates);
+    await onRefresh();
+  };
+
+  const handleCreateTask = async (groupName: string) => {
+    const groupItems = groups[groupName] ?? [];
+    const maxPos = groupItems.length ? Math.max(...groupItems.map((i: any) => Number(i.position ?? 0))) : 0;
+    await createChecklistItem({
+      project_id: projectId,
+      item_name: "New Checklist Task",
+      group_name: groupName,
+      required: true,
+      has_deliverable: true,
+      deliverable_type: "document",
+      position: maxPos + 1,
+    });
+    await onRefresh();
+  };
+
+  const handleCreateGroup = async () => {
+    const g = newGroupName.trim();
+    if (!g) return;
+    await createChecklistItem({
+      project_id: projectId,
+      item_name: "New Checklist Task",
+      group_name: g,
+      required: true,
+      has_deliverable: true,
+      deliverable_type: "document",
+      position: 0,
+    });
+    setNewGroupName("");
+    await onRefresh();
+  };
+
   return (
     <div className="space-y-4">
       {/* Summary bar */}
@@ -403,12 +473,29 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
             className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
               filter === f ? "bg-slate-900 text-white" : "bg-white border text-slate-500 hover:text-slate-800"
             }`}>
-            {f === "all" ? `All (${checklist.length})` :
-             f === "submitted" ? `Pending (${checklist.filter(i => getStatus(i) === "submitted").length})` :
-             `${f.charAt(0).toUpperCase() + f.slice(1)} (${checklist.filter(i => getStatus(i) === f).length})`}
+            {f === "all" ? `All (${activeChecklist.length})` :
+             f === "submitted" ? `Pending (${activeChecklist.filter(i => getStatus(i) === "submitted").length})` :
+             `${f.charAt(0).toUpperCase() + f.slice(1)} (${activeChecklist.filter(i => getStatus(i) === f).length})`}
           </button>
         ))}
       </div>
+
+      {canSubmit && (
+        <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-white p-3">
+          <input
+            value={newGroupName}
+            onChange={(e) => setNewGroupName(e.target.value)}
+            placeholder="New category name"
+            className="rounded-lg border px-3 py-2 text-sm"
+          />
+          <button onClick={handleCreateGroup} className="rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-700">
+            + Add Category
+          </button>
+          <button onClick={() => setShowArchived((v) => !v)} className="rounded-lg border px-3 py-2 text-xs text-slate-600 hover:bg-slate-50">
+            {showArchived ? "Hide Archive" : `Show Archive (${archivedChecklist.length})`}
+          </button>
+        </div>
+      )}
 
       {/* Groups */}
       {Object.entries(groups).map(([groupName, items]) => {
@@ -442,6 +529,14 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                   </div>
                   <p className="mt-0.5 text-right text-xs text-slate-400">{gp.pct}%</p>
                 </div>
+                {canSubmit && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleCreateTask(groupName); }}
+                    className="rounded-lg border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+                  >
+                    + Task
+                  </button>
+                )}
                 <span className="text-slate-300 text-sm">{isCollapsed ? "▶" : "▾"}</span>
               </div>
             </button>
@@ -487,7 +582,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                             )}
                             {(item as any).approver_role && <span className="text-slate-500">✅ Approver: {(item as any).approver_role}</span>}
                             {hasDeliverable ? (
-                              <span className="text-indigo-600">📎 Deliverable required</span>
+                              <span className="text-indigo-600">📎 {(item as any).deliverable_type ? `${(item as any).deliverable_type}` : "Deliverable required"}{(item as any).deliverable_type === "custom" && (item as any).deliverable_custom ? `: ${(item as any).deliverable_custom}` : ""}</span>
                             ) : (
                               <span className="text-green-600">☑️ Checkbox only (no file)</span>
                             )}
@@ -514,6 +609,25 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                                 <option key={m.id} value={m.id}>{m.full_name} ({m.role})</option>
                               ))}
                             </select>
+                          )}
+                          {canSubmit && (
+                            <button
+                              onClick={() => {
+                                const next = prompt("Edit task name", item.item_name);
+                                if (next && next.trim()) handleQuickEdit(item, { item_name: next.trim() });
+                              }}
+                              className="rounded-lg border px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
+                            >
+                              Edit
+                            </button>
+                          )}
+                          {canSubmit && (
+                            <button
+                              onClick={() => handleArchive(item)}
+                              className="rounded-lg border border-red-200 px-2 py-1.5 text-xs text-red-600 hover:bg-red-50"
+                            >
+                              Archive
+                            </button>
                           )}
                           {/* Mark complete (no deliverable) */}
                           {!hasDeliverable && status === "pending" && canSubmit && (
@@ -582,6 +696,47 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                             </div>
                           )}
 
+                          {canSubmit && (
+                            <div className="space-y-2 pt-2 border-t">
+                              <p className="text-xs font-medium text-slate-600">Task settings</p>
+                              <div className="grid gap-2 sm:grid-cols-2">
+                                <select
+                                  value={String((item as any).deliverable_type ?? "document")}
+                                  onChange={(e) => handleQuickEdit(item, {
+                                    deliverable_type: e.target.value,
+                                    has_deliverable: e.target.value !== "none",
+                                  })}
+                                  className="rounded-lg border px-2 py-2 text-xs"
+                                >
+                                  {DELIVERABLE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                                </select>
+                                {(item as any).deliverable_type === "custom" && (
+                                  <input
+                                    defaultValue={String((item as any).deliverable_custom ?? "")}
+                                    onBlur={(e) => handleQuickEdit(item, { deliverable_custom: e.target.value || null })}
+                                    placeholder="Custom deliverable type"
+                                    className="rounded-lg border px-2 py-2 text-xs"
+                                  />
+                                )}
+                                <input
+                                  type="number"
+                                  defaultValue={String((item as any).due_offset_days ?? "")}
+                                  onBlur={(e) => handleQuickEdit(item, { due_offset_days: e.target.value === "" ? null : Number(e.target.value) })}
+                                  placeholder="Due offset days"
+                                  className="rounded-lg border px-2 py-2 text-xs"
+                                />
+                                <select
+                                  value={String((item as any).required ? "yes" : "no")}
+                                  onChange={(e) => handleQuickEdit(item, { required: e.target.value === "yes" })}
+                                  className="rounded-lg border px-2 py-2 text-xs"
+                                >
+                                  <option value="yes">Required</option>
+                                  <option value="no">Optional</option>
+                                </select>
+                              </div>
+                            </div>
+                          )}
+
                           {/* Submit form */}
                           {canSubmit && status !== "approved" && !isRejecting && hasDeliverable && (
                             <div className="space-y-2 pt-2 border-t">
@@ -641,6 +796,30 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
           </div>
         );
       })}
+
+      {showArchived && (
+        <div className="rounded-xl border bg-white p-4">
+          <h4 className="mb-2 font-semibold text-slate-800">Archived Tasks</h4>
+          {Object.keys(archivedGroups).length === 0 && <p className="text-sm text-slate-400">No archived tasks.</p>}
+          <div className="space-y-2">
+            {Object.entries(archivedGroups).map(([groupName, items]) => (
+              <div key={groupName} className="rounded-lg border p-3">
+                <p className="mb-2 text-sm font-medium text-slate-700">{groupName}</p>
+                <div className="space-y-1">
+                  {items.map((item) => (
+                    <div key={item.id} className="flex items-center justify-between rounded border px-2 py-1.5">
+                      <p className="text-sm text-slate-600">{item.item_name}</p>
+                      {canSubmit && (
+                        <button onClick={() => handleRestore(item)} className="rounded border px-2 py-1 text-xs text-slate-600 hover:bg-slate-50">Restore</button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

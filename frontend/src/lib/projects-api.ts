@@ -57,10 +57,17 @@ export type ChecklistItem = {
   assignee_role?: string;
   assigned_to?: string;
   due_date?: string;
+  due_offset_days?: number | null;
   depends_on?: string;
   position: number;
+  group_name?: string;
+  has_deliverable?: boolean;
+  deliverable_type?: string;
+  deliverable_custom?: string | null;
+  archived_at?: string | null;
+  archived_by?: string | null;
   // joined completion
-  checklist_completions?: ChecklistCompletion[];
+  checklist_completions?: ChecklistCompletion[] | ChecklistCompletion;
   users?: { full_name: string };
 };
 
@@ -157,20 +164,72 @@ export async function deleteProject(id: string) {
 }
 
 // ---- Checklists ----
-export async function fetchProjectChecklist(projectId: string) {
-  const { data, error } = await supabase
+export async function fetchProjectChecklist(projectId: string, opts?: { includeArchived?: boolean }) {
+  let q = supabase
     .from("project_checklists")
     .select("*, checklist_completions(*), users(full_name)")
     .eq("project_id", projectId)
     .order("position");
+
+  if (!opts?.includeArchived) {
+    q = q.is("archived_at", null);
+  }
+
+  const { data, error } = await q;
   if (error) throw error;
   return (data ?? []) as ChecklistItem[];
+}
+
+export async function createChecklistItem(body: Partial<ChecklistItem> & { project_id: string; item_name: string; position?: number }) {
+  const { data, error } = await supabase
+    .from("project_checklists")
+    .insert({
+      project_id: body.project_id,
+      item_name: body.item_name,
+      description: body.description || null,
+      required: body.required ?? true,
+      assignee_role: body.assignee_role || null,
+      assigned_to: body.assigned_to || null,
+      due_offset_days: body.due_offset_days ?? null,
+      group_name: body.group_name || "General",
+      has_deliverable: body.has_deliverable ?? true,
+      deliverable_type: body.deliverable_type || null,
+      deliverable_custom: body.deliverable_custom || null,
+      position: body.position ?? 0,
+    })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
 }
 
 export async function updateChecklistItem(id: string, updates: Partial<ChecklistItem>) {
   const { data, error } = await supabase
     .from("project_checklists")
     .update(updates)
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function archiveChecklistItem(id: string) {
+  const { data: auth } = await supabase.auth.getUser();
+  const { data, error } = await supabase
+    .from("project_checklists")
+    .update({ archived_at: new Date().toISOString(), archived_by: auth.user?.id ?? null })
+    .eq("id", id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function restoreChecklistItem(id: string) {
+  const { data, error } = await supabase
+    .from("project_checklists")
+    .update({ archived_at: null, archived_by: null })
     .eq("id", id)
     .select()
     .single();

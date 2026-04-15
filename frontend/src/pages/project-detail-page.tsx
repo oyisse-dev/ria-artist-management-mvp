@@ -47,7 +47,7 @@ export function ProjectDetailPage() {
     try {
       const p = await fetchProject(id);
       const [cl, tx, al, u, assign] = await Promise.all([
-        fetchProjectChecklist(id),
+        fetchProjectChecklist(id, { includeArchived: true }),
         supabase.from("transactions").select("*").eq("project_id", id).order("date", { ascending: false }),
         fetchAuditLog("projects", id),
         fetchUsers(),
