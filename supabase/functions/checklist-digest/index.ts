@@ -36,16 +36,53 @@ Deno.serve(async (req) => {
     const body = await req.json().catch(() => ({}));
     const kind: DigestKind = body.kind === "assigned_digest" ? "assigned_digest" : "pending_approval";
 
-    const { data: pending } = await admin
-      .from("v_project_checklists_compat")
-      .select("id, project_id, item_name, assignee_role, assigned_to")
-      .is("archived_at", null)
-      .limit(300);
+    let pending: any[] = [];
+    let submissions: any[] = [];
 
-    const { data: submissions } = await admin
-      .from("v_checklist_completions_compat")
-      .select("checklist_id, approval_status")
-      .limit(600);
+    // Prefer compatibility views; fallback to legacy tables if unavailable.
+    {
+      const { data, error } = await admin
+        .from("v_project_checklists_compat")
+        .select("id, project_id, item_name, assignee_role, assigned_to, archived_at")
+        .is("archived_at", null)
+        .limit(1000);
+      if (!error && data) pending = data;
+      else {
+        const { data: legacy, error: legacyErr } = await admin
+          .from("project_checklists")
+          .select("id, project_id, item_name, assignee_role, assigned_to, archived_at")
+          .is("archived_at", null)
+          .limit(1000);
+        if (legacyErr) {
+          return new Response(JSON.stringify({ error: `Checklist source query failed`, details: `${error?.message ?? ""} | ${legacyErr.message}` }), {
+            status: 500,
+            headers: { ...cors, "Content-Type": "application/json" },
+          });
+        }
+        pending = legacy ?? [];
+      }
+    }
+
+    {
+      const { data, error } = await admin
+        .from("v_checklist_completions_compat")
+        .select("checklist_id, approval_status")
+        .limit(2000);
+      if (!error && data) submissions = data;
+      else {
+        const { data: legacy, error: legacyErr } = await admin
+          .from("checklist_completions")
+          .select("checklist_id, approval_status")
+          .limit(2000);
+        if (legacyErr) {
+          return new Response(JSON.stringify({ error: `Submission source query failed`, details: `${error?.message ?? ""} | ${legacyErr.message}` }), {
+            status: 500,
+            headers: { ...cors, "Content-Type": "application/json" },
+          });
+        }
+        submissions = legacy ?? [];
+      }
+    }
 
     const statusMap = new Map<string, string>();
     for (const s of submissions ?? []) statusMap.set(String(s.checklist_id), String(s.approval_status));
@@ -77,7 +114,7 @@ Deno.serve(async (req) => {
       }
     }
 
-    return new Response(JSON.stringify({ ok: true, kind, count: payloadItems.length }), {
+    return new Response(JSON.stringify({ ok: true, kind, count: payloadItems.length, debug: { pendingCount: pending.length, submissionsCount: submissions.length } }), {
       status: 200,
       headers: { ...cors, "Content-Type": "application/json" },
     });
