@@ -30,6 +30,7 @@ export function ProjectDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [tab, setTab] = useState<Tab>("checklist");
+  const [focusStatus, setFocusStatus] = useState<"all" | "pending" | "submitted" | "approved" | "rejected" | null>(null);
 
   // Transaction modal
   const [showTxModal, setShowTxModal] = useState(false);
@@ -175,7 +176,11 @@ export function ProjectDetailPage() {
   const approvedPct = Math.round((completedCount / totalStatus) * 100);
   const pendingPct = Math.round((pendingApproval / totalStatus) * 100);
   const rejectedPct = Math.round((rejectedChecklist / totalStatus) * 100);
-  const donut = `conic-gradient(#16a34a 0 ${approvedPct}%, #f59e0b ${approvedPct}% ${approvedPct + pendingPct}%, #ef4444 ${approvedPct + pendingPct}% ${approvedPct + pendingPct + rejectedPct}%, #cbd5e1 ${approvedPct + pendingPct + rejectedPct}% 100%)`;
+  const donut = `conic-gradient(#16a34a 0 ${approvedPct}%, #f59e0b ${approvedPct}% ${approvedPct + pendingPct}%, #ef4444 ${approvedPct + pendingPct}% ${approvedPct + pendingPct + rejectedPct}%, #334155 ${approvedPct + pendingPct + rejectedPct}% 100%)`;
+
+  const prevWindow = milestoneDays.slice(0, 7).reduce((acc, d) => acc + d.count, 0);
+  const nextWindow = milestoneDays.slice(7, 14).reduce((acc, d) => acc + d.count, 0);
+  const trend = nextWindow > prevWindow ? "up" : nextWindow < prevWindow ? "down" : "flat";
 
   const txSummary = transactions.reduce((acc: { income: number; expense: number }, tx: any) => {
     if (tx.type === "income") acc.income += Number(tx.amount);
@@ -266,15 +271,20 @@ export function ProjectDetailPage() {
         <div className="rounded-xl border bg-white p-4">
           <p className="text-sm font-medium text-slate-700">Checklist Status Mix</p>
           <div className="mt-3 flex items-center gap-4">
-            <div className="relative h-24 w-24 rounded-full" style={{ background: donut }}>
+            <button
+              onClick={() => { setTab("checklist"); setFocusStatus("all"); }}
+              className="relative h-24 w-24 rounded-full"
+              style={{ background: donut }}
+              title="Click to open checklist"
+            >
               <div className="absolute inset-3 rounded-full bg-white" />
               <div className="absolute inset-0 flex items-center justify-center text-xs font-semibold text-slate-700">{progress}%</div>
-            </div>
+            </button>
             <div className="space-y-1 text-xs">
-              <p><span className="inline-block h-2 w-2 rounded-full bg-green-600" /> <span className="ml-1">Approved: {completedCount}</span></p>
-              <p><span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> <span className="ml-1">Pending: {pendingApproval}</span></p>
-              <p><span className="inline-block h-2 w-2 rounded-full bg-red-500" /> <span className="ml-1">Rejected: {rejectedChecklist}</span></p>
-              <p><span className="inline-block h-2 w-2 rounded-full bg-slate-300" /> <span className="ml-1">To Do: {todoChecklist}</span></p>
+              <button onClick={() => { setTab("checklist"); setFocusStatus("approved"); }} className="block text-left"><span className="inline-block h-2 w-2 rounded-full bg-green-600" /> <span className="ml-1">Approved: {completedCount}</span></button>
+              <button onClick={() => { setTab("checklist"); setFocusStatus("submitted"); }} className="block text-left"><span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> <span className="ml-1">Pending: {pendingApproval}</span></button>
+              <button onClick={() => { setTab("checklist"); setFocusStatus("rejected"); }} className="block text-left"><span className="inline-block h-2 w-2 rounded-full bg-red-500" /> <span className="ml-1">Rejected: {rejectedChecklist}</span></button>
+              <button onClick={() => { setTab("checklist"); setFocusStatus("pending"); }} className="block text-left"><span className="inline-block h-2 w-2 rounded-full bg-slate-500" /> <span className="ml-1">To Do: {todoChecklist}</span></button>
             </div>
           </div>
         </div>
@@ -283,6 +293,12 @@ export function ProjectDetailPage() {
           <div className="mb-2 flex items-center justify-between">
             <p className="text-sm font-medium text-slate-700">Milestone Timeline (next 28 days)</p>
             <p className="text-xs text-slate-400">Interactive bars · hover for tasks</p>
+          </div>
+          <div className="mb-2 flex items-center gap-2 text-xs">
+            <span className="rounded border px-2 py-0.5 text-slate-600">Trend:</span>
+            {trend === "up" && <span className="rounded bg-amber-100 px-2 py-0.5 text-amber-700">↑ More upcoming load (next 7d)</span>}
+            {trend === "down" && <span className="rounded bg-emerald-100 px-2 py-0.5 text-emerald-700">↓ Lower upcoming load (next 7d)</span>}
+            {trend === "flat" && <span className="rounded bg-slate-100 px-2 py-0.5 text-slate-700">→ Stable load</span>}
           </div>
           <div className="space-y-1.5">
             {milestoneDays.map((d) => {
@@ -338,6 +354,7 @@ export function ProjectDetailPage() {
           projectId={project.id}
           artistId={project.artist_id}
           targetDate={project.target_date}
+          focusStatus={focusStatus}
           teamMembers={assignments
             .map((a: any) => a.users)
             .filter(Boolean)

@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import {
   submitChecklistCompletion,
@@ -19,6 +19,7 @@ interface Props {
   targetDate?: string;
   teamMembers: Array<{ id: string; full_name: string; role: string }>;
   onRefresh: () => void;
+  focusStatus?: Filter | null;
 }
 
 type Filter = "all" | "pending" | "submitted" | "approved" | "rejected";
@@ -160,12 +161,18 @@ const STATUS_CONFIG = {
   rejected:  { label: "Rejected",          color: "bg-red-100 text-red-600",      dot: "bg-red-400"   },
 };
 
-export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, teamMembers, onRefresh }: Props) {
+export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, teamMembers, onRefresh, focusStatus }: Props) {
   const { user } = useAuthStore();
   const isAdmin = user?.role === "admin";
   const canSubmit = user?.role === "admin" || user?.role === "manager";
 
   const [filter, setFilter] = useState<Filter>("all");
+
+  useEffect(() => {
+    if (focusStatus && ["all", "pending", "submitted", "approved", "rejected"].includes(focusStatus)) {
+      setFilter(focusStatus as Filter);
+    }
+  }, [focusStatus]);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
   const [submitNotes, setSubmitNotes] = useState("");
