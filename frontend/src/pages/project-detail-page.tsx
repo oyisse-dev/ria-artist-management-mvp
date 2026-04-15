@@ -27,6 +27,7 @@ export function ProjectDetailPage() {
   const [teamMembers, setTeamMembers] = useState<Array<Record<string, unknown>>>([]);
   const [assignments, setAssignments] = useState<Array<Record<string, unknown>>>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [refreshNonce, setRefreshNonce] = useState(0);
   const [tab, setTab] = useState<Tab>("checklist");
 
@@ -44,8 +45,11 @@ export function ProjectDetailPage() {
   const load = async () => {
     if (!id) return;
     setLoading(true);
+    setError(null);
     try {
       const p = await fetchProject(id);
+      setProject(p); // set early so partial downstream failures don't show "Project not found"
+
       const [cl, tx, al, u, assign] = await Promise.all([
         fetchProjectChecklist(id, { includeArchived: true }),
         supabase.from("transactions").select("*").eq("project_id", id).order("date", { ascending: false }),
@@ -53,12 +57,16 @@ export function ProjectDetailPage() {
         fetchUsers(),
         supabase.from("artist_assignments").select("*, users(id, full_name, role)").eq("artist_id", p.artist_id),
       ]);
-      setProject(p);
+
       setChecklist(cl);
       setTransactions(tx.data ?? []);
       setAuditLog(al);
       setTeamMembers(u);
       setAssignments(assign.data ?? []);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to load project data";
+      setError(msg);
+      console.error("Project detail load error:", e);
     } finally {
       setLoading(false);
     }
@@ -138,6 +146,12 @@ export function ProjectDetailPage() {
 
   return (
     <section className="space-y-5">
+      {error && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          Some project sections failed to load: {error}
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-start justify-between">
         <div>
