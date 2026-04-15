@@ -188,6 +188,81 @@ export function ProjectDetailPage() {
     return acc;
   }, { income: 0, expense: 0 });
 
+  const userById = new Map(teamMembers.map((u: any) => [String(u.id), u]));
+  const workload = assignments.map((a: any) => {
+    const member = a.users;
+    const items = checklist.filter((c: any) => String(c.assigned_to ?? "") === String(member?.id ?? ""));
+    const approved = items.filter((i: any) => getCompletion(i)?.approval_status === "approved").length;
+    const submitted = items.filter((i: any) => getCompletion(i)?.approval_status === "submitted").length;
+    const pending = items.length - approved - submitted;
+    return {
+      id: member?.id,
+      name: member?.full_name,
+      role: member?.role,
+      total: items.length,
+      approved,
+      submitted,
+      pending,
+      loadScore: pending * 2 + submitted,
+    };
+  }).sort((a, b) => b.loadScore - a.loadScore);
+
+  const keywordPool = (text: string) => text.toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 3);
+  const checklistFinanceLinks = checklist.map((item: any) => {
+    const words = new Set(keywordPool(`${item.item_name} ${item.description ?? ""}`));
+    const matchedTx = transactions.filter((tx: any) => {
+      const hay = `${tx.category ?? ""} ${tx.notes ?? ""} ${tx.description ?? ""}`.toLowerCase();
+      let score = 0;
+      words.forEach((w) => { if (hay.includes(w)) score += 1; });
+      return score > 0;
+    });
+    const spend = matchedTx.reduce((sum: number, tx: any) => sum + (tx.type === "expense" ? Number(tx.amount) : 0), 0);
+    return {
+      id: item.id,
+      item_name: item.item_name,
+      status: getCompletion(item)?.approval_status ?? "pending",
+      matchedCount: matchedTx.length,
+      spend,
+    };
+  }).filter((r) => r.matchedCount > 0 || r.spend > 0);
+
+  const checklistAuditFeed = checklist.flatMap((item: any) => {
+    const c = getCompletion(item);
+    if (!c) return [] as any[];
+    const events: any[] = [];
+    if (c.completed_at) {
+      const user = userById.get(String(c.completed_by ?? ""));
+      events.push({
+        at: c.completed_at,
+        type: "SUBMITTED",
+        item: item.item_name,
+        by: user?.full_name ?? "Team member",
+        detail: c.notes || "Submitted for approval",
+      });
+    }
+    if (c.approved_at && c.approval_status === "approved") {
+      const approver = userById.get(String(c.approver_id ?? ""));
+      events.push({
+        at: c.approved_at,
+        type: "APPROVED",
+        item: item.item_name,
+        by: approver?.full_name ?? "Approver",
+        detail: "Approved",
+      });
+    }
+    if (c.approval_status === "rejected") {
+      const approver = userById.get(String(c.approver_id ?? ""));
+      events.push({
+        at: c.approved_at ?? c.completed_at ?? new Date().toISOString(),
+        type: "REJECTED",
+        item: item.item_name,
+        by: approver?.full_name ?? "Approver",
+        detail: c.rejection_reason || "Rejected",
+      });
+    }
+    return events;
+  }).sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+
   const tabs: { key: Tab; label: string }[] = [
     { key: "checklist", label: `Checklist (${completedCount}/${checklist.length})` },
     { key: "assets", label: "Assets" },
@@ -392,6 +467,26 @@ export function ProjectDetailPage() {
               </button>
             </div>
           )}
+          {checklistFinanceLinks.length > 0 && (
+            <div className="rounded-xl border bg-white p-4">
+              <p className="mb-3 text-sm font-semibold text-slate-700">Checklist ↔ Finance Linkage (heuristic)</p>
+              <div className="space-y-2">
+                {checklistFinanceLinks.slice(0, 12).map((row) => (
+                  <div key={row.id} className="flex items-center justify-between rounded border px-3 py-2 text-xs">
+                    <div>
+                      <p className="font-medium text-slate-700">{row.item_name}</p>
+                      <p className="text-slate-500">{row.matchedCount} related transaction{row.matchedCount > 1 ? "s" : ""}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-semibold text-slate-700">UGX {Number(row.spend).toLocaleString()}</p>
+                      <p className="text-slate-400">status: {row.status}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div className="overflow-hidden rounded-xl border bg-white">
             <table className="min-w-full text-sm">
               <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -424,6 +519,30 @@ export function ProjectDetailPage() {
               No team members assigned to this artist yet. Go to the artist profile to assign team members.
             </div>
           )}
+
+          {workload.length > 0 && (
+            <div className="rounded-xl border bg-white p-4">
+              <p className="mb-3 text-sm font-semibold text-slate-700">Checklist Workload Indicators</p>
+              <div className="space-y-2">
+                {workload.map((w) => {
+                  const barMax = Math.max(1, ...workload.map((x) => x.total));
+                  const width = `${Math.round((w.total / barMax) * 100)}%`;
+                  return (
+                    <div key={w.id} className="rounded-lg border p-2">
+                      <div className="flex items-center justify-between text-xs">
+                        <p className="font-medium text-slate-700">{w.name} <span className="text-slate-400">({w.role})</span></p>
+                        <p className="text-slate-500">{w.total} items • {w.pending} pending • {w.submitted} awaiting</p>
+                      </div>
+                      <div className="mt-1 h-2 rounded bg-slate-100">
+                        <div className={`h-2 rounded ${w.loadScore >= 8 ? "bg-red-500" : w.loadScore >= 4 ? "bg-amber-500" : "bg-emerald-500"}`} style={{ width }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {assignments.map((a: any) => (
             <div key={a.user_id} className="flex items-center gap-3 rounded-xl border bg-white p-4">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-slate-200 text-sm font-bold text-slate-600">
@@ -442,7 +561,25 @@ export function ProjectDetailPage() {
       )}
 
       {tab === "audit" && (
-        <div className="overflow-hidden rounded-xl border bg-white">
+        <div className="space-y-3">
+          {checklistAuditFeed.length > 0 && (
+            <div className="rounded-xl border bg-white p-4">
+              <p className="mb-3 text-sm font-semibold text-slate-700">Live Approval Feed</p>
+              <div className="space-y-2">
+                {checklistAuditFeed.slice(0, 15).map((evt: any, idx: number) => (
+                  <div key={`${evt.at}-${idx}`} className="rounded border px-3 py-2 text-xs">
+                    <div className="flex items-center justify-between">
+                      <p className="font-medium text-slate-700">{evt.type} · {evt.item}</p>
+                      <p className="text-slate-400">{new Date(evt.at).toLocaleString()}</p>
+                    </div>
+                    <p className="text-slate-500">by {evt.by} — {evt.detail}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="overflow-hidden rounded-xl border bg-white">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
               <tr>
@@ -471,6 +608,7 @@ export function ProjectDetailPage() {
               ))}
             </tbody>
           </table>
+        </div>
         </div>
       )}
 
