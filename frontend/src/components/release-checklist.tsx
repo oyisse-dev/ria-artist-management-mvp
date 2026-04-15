@@ -187,6 +187,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [prioritySort, setPrioritySort] = useState(false);
   const [quickFilters, setQuickFilters] = useState<Set<QuickFilter>>(new Set());
   const [editingTask, setEditingTask] = useState<ChecklistItem | null>(null);
+  const [creatingGroupName, setCreatingGroupName] = useState<string | null>(null);
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
   const [dragItemId, setDragItemId] = useState<string | null>(null);
   const [dropTargetStatus, setDropTargetStatus] = useState<string | null>(null);
@@ -581,7 +582,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     }
 
     try {
-      await updateChecklistItem(editingTask.id, {
+      const payload: any = {
         item_name: name,
         description: editForm.description.trim() || null,
         group_name: editForm.group_name.trim() || "General",
@@ -593,9 +594,33 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
         deliverable_custom: editForm.deliverable_type === "custom" ? (editForm.deliverable_custom.trim() || null) : null,
         has_deliverable: editForm.deliverable_type !== "none",
         priority: (editForm as any).priority ?? "medium",
-      } as any);
+      };
+
+      if (editingTask.id === "__new__") {
+        const groupName = creatingGroupName ?? editForm.group_name ?? "General";
+        const groupItems = groups[groupName] ?? [];
+        const maxPos = groupItems.length ? Math.max(...groupItems.map((i: any) => Number(i.position ?? 0))) : 0;
+        await createChecklistItem({
+          project_id: projectId,
+          item_name: payload.item_name,
+          description: payload.description,
+          group_name: payload.group_name,
+          assignee_role: payload.assignee_role,
+          assigned_to: payload.assigned_to,
+          required: payload.required,
+          due_offset_days: payload.due_offset_days,
+          has_deliverable: payload.has_deliverable,
+          deliverable_type: payload.deliverable_type,
+          deliverable_custom: payload.deliverable_custom,
+          position: maxPos + 1,
+          priority: payload.priority,
+        } as any);
+      } else {
+        await updateChecklistItem(editingTask.id, payload);
+      }
 
       setEditingTask(null);
+      setCreatingGroupName(null);
       await onRefresh();
       alert("Task saved.");
     } catch (e) {
@@ -605,18 +630,35 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   };
 
   const handleCreateTask = async (groupName: string) => {
-    const groupItems = groups[groupName] ?? [];
-    const maxPos = groupItems.length ? Math.max(...groupItems.map((i: any) => Number(i.position ?? 0))) : 0;
-    await createChecklistItem({
+    setCreatingGroupName(groupName);
+    setEditingTask({
+      id: "__new__",
       project_id: projectId,
-      item_name: "New Checklist Task",
-      group_name: groupName,
+      item_name: "",
       required: true,
+      position: 0,
+      group_name: groupName,
       has_deliverable: true,
       deliverable_type: "document",
-      position: maxPos + 1,
-    });
-    await onRefresh();
+      deliverable_custom: null,
+      due_offset_days: null,
+      assignee_role: "",
+      assigned_to: "",
+      description: "",
+      checklist_completions: [],
+    } as any);
+    setEditForm({
+      item_name: "",
+      description: "",
+      group_name: groupName,
+      assignee_role: "",
+      assigned_to: "",
+      required: true,
+      due_offset_days: "",
+      deliverable_type: "document",
+      deliverable_custom: "",
+      priority: "medium",
+    } as any);
   };
 
   const handleCreateGroup = async () => {
@@ -1331,7 +1373,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
               )}
             </div>
             <div className="mt-5 flex justify-end gap-2">
-              <button onClick={() => setEditingTask(null)} className="rounded-lg border px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button onClick={() => { setEditingTask(null); setCreatingGroupName(null); }} className="rounded-lg border px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
               <button onClick={saveEditModal} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">Save changes</button>
             </div>
           </div>
