@@ -147,6 +147,28 @@ export function ProjectDetailPage() {
   const completedCount = checklist.filter((i: any) => getCompletion(i)?.approval_status === "approved").length;
   const pendingApproval = checklist.filter((i: any) => getCompletion(i)?.approval_status === "submitted").length;
 
+  const milestoneDays = Array.from({ length: 28 }, (_, idx) => {
+    const d = new Date();
+    d.setDate(d.getDate() + idx);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const iso = `${yyyy}-${mm}-${dd}`;
+
+    const dueItems = checklist.filter((item: any) => {
+      const offset = item?.due_offset_days;
+      if (offset === undefined || offset === null || !project?.target_date) return false;
+      const due = new Date(project.target_date);
+      due.setDate(due.getDate() + Number(offset));
+      const dueIso = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, "0")}-${String(due.getDate()).padStart(2, "0")}`;
+      return dueIso === iso;
+    });
+
+    return { iso, count: dueItems.length, items: dueItems };
+  });
+
+  const upcomingMilestones = milestoneDays.filter((d) => d.count > 0).slice(0, 5);
+
   const txSummary = transactions.reduce((acc: { income: number; expense: number }, tx: any) => {
     if (tx.type === "income") acc.income += Number(tx.amount);
     else acc.expense += Number(tx.amount);
@@ -228,6 +250,36 @@ export function ProjectDetailPage() {
           <p className="text-xs text-slate-500">Pending Approval</p>
           <p className={`mt-1 text-2xl font-bold ${pendingApproval > 0 ? "text-amber-600" : "text-slate-400"}`}>{pendingApproval}</p>
           <p className="text-xs text-slate-500">items need review</p>
+        </div>
+      </div>
+
+      {/* Milestone Heatmap + Upcoming */}
+      <div className="rounded-xl border bg-white p-4">
+        <div className="mb-3 flex items-center justify-between">
+          <p className="text-sm font-medium text-slate-700">Milestone Heatmap (next 28 days)</p>
+          <p className="text-xs text-slate-400">Darker = more checklist due items</p>
+        </div>
+        <div className="grid grid-cols-14 gap-1">
+          {milestoneDays.map((d) => {
+            const intensity = d.count >= 3 ? "bg-slate-900" : d.count === 2 ? "bg-slate-600" : d.count === 1 ? "bg-slate-300" : "bg-slate-100";
+            const label = d.items.map((i: any) => i.item_name).slice(0, 3).join(", ");
+            return (
+              <div key={d.iso} title={`${d.iso} • ${d.count} due${label ? ` • ${label}` : ""}`} className={`h-4 rounded ${intensity}`} />
+            );
+          })}
+        </div>
+
+        <div className="mt-4">
+          <p className="mb-2 text-xs font-medium text-slate-600">Upcoming Milestones</p>
+          <div className="space-y-1">
+            {upcomingMilestones.length === 0 && <p className="text-xs text-slate-400">No upcoming checklist due dates in next 28 days.</p>}
+            {upcomingMilestones.map((m) => (
+              <div key={m.iso} className="flex items-center justify-between rounded border px-2 py-1 text-xs">
+                <span className="font-medium text-slate-700">{m.iso}</span>
+                <span className="text-slate-500">{m.count} due item{m.count > 1 ? "s" : ""}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
