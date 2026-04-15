@@ -12,6 +12,8 @@ interface AuthState {
     fullName?: string;
   } | null;
   loading: boolean;
+  initialized: boolean;
+  authError: string | null;
   signIn: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   initialize: () => Promise<void>;
@@ -21,28 +23,41 @@ export const useAuthStore = create<AuthState>((set) => ({
   accessToken: null,
   user: null,
   loading: true,
+  initialized: false,
+  authError: null,
 
   initialize: async () => {
-    const { data: { session } } = await supabase.auth.getSession();
-    if (session) {
-      const { data: profile } = await supabase
-        .from("users")
-        .select("role, full_name")
-        .eq("id", session.user.id)
-        .single();
+    try {
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error) {
+        set({ loading: false, initialized: true, authError: error.message });
+        return;
+      }
 
-      set({
-        accessToken: session.access_token,
-        user: {
-          id: session.user.id,
-          email: session.user.email,
-          role: profile?.role as Role,
-          fullName: profile?.full_name
-        },
-        loading: false
-      });
-    } else {
-      set({ loading: false });
+      if (session) {
+        const { data: profile } = await supabase
+          .from("users")
+          .select("role, full_name")
+          .eq("id", session.user.id)
+          .single();
+
+        set({
+          accessToken: session.access_token,
+          user: {
+            id: session.user.id,
+            email: session.user.email,
+            role: profile?.role as Role,
+            fullName: profile?.full_name
+          },
+          loading: false,
+          initialized: true,
+          authError: null,
+        });
+      } else {
+        set({ loading: false, initialized: true, authError: null });
+      }
+    } catch (e) {
+      set({ loading: false, initialized: true, authError: e instanceof Error ? e.message : "Session init failed" });
     }
 
     // Listen for auth changes
@@ -61,7 +76,8 @@ export const useAuthStore = create<AuthState>((set) => ({
             email: session.user.email,
             role: profile?.role as Role,
             fullName: profile?.full_name
-          }
+          },
+          authError: null,
         });
       } else {
         set({ accessToken: null, user: null });
@@ -73,20 +89,28 @@ export const useAuthStore = create<AuthState>((set) => ({
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
 
+    const session = data.session;
+    const authUser = data.user;
+
+    if (!session || !authUser) {
+      throw new Error("Sign in succeeded but session was not established. Please retry.");
+    }
+
     const { data: profile } = await supabase
       .from("users")
       .select("role, full_name")
-      .eq("id", data.user.id)
+      .eq("id", authUser.id)
       .single();
 
     set({
-      accessToken: data.session.access_token,
+      accessToken: session.access_token,
       user: {
-        id: data.user.id,
-        email: data.user.email,
+        id: authUser.id,
+        email: authUser.email,
         role: profile?.role as Role,
         fullName: profile?.full_name
-      }
+      },
+      authError: null,
     });
   },
 
