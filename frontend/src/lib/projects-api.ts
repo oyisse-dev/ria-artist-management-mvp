@@ -64,6 +64,7 @@ export type ChecklistItem = {
   has_deliverable?: boolean;
   deliverable_type?: string;
   deliverable_custom?: string | null;
+  priority?: "low" | "medium" | "high" | "urgent";
   archived_at?: string | null;
   archived_by?: string | null;
   // joined completion

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { supabase } from "../lib/supabase";
 import {
   submitChecklistCompletion,
@@ -22,7 +22,17 @@ interface Props {
 }
 
 type Filter = "all" | "pending" | "submitted" | "approved" | "rejected";
+type DisplayMode = "detailed" | "table";
+type QuickFilter = "mine" | "overdue" | "requires_file" | "waiting_approval";
 const DELIVERABLE_TYPES = ["audio", "artwork", "document", "video", "link", "none", "custom"] as const;
+const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
+const PRIORITY_SCORE: Record<string, number> = { low: 1, medium: 2, high: 3, urgent: 4 };
+const PRIORITY_PILL: Record<string, string> = {
+  low: "bg-slate-100 text-slate-600",
+  medium: "bg-blue-100 text-blue-700",
+  high: "bg-red-100 text-red-700",
+  urgent: "bg-fuchsia-100 text-fuchsia-700",
+};
 
 const GROUP_ICONS: Record<string, string> = {
   "Pre-Production": "🎯",
@@ -165,6 +175,10 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
+  const [displayMode, setDisplayMode] = useState<DisplayMode>("detailed");
+  const [search, setSearch] = useState("");
+  const [prioritySort, setPrioritySort] = useState(false);
+  const [quickFilters, setQuickFilters] = useState<Set<QuickFilter>>(new Set());
   const [editingTask, setEditingTask] = useState<ChecklistItem | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameGroupValue, setRenameGroupValue] = useState("");
@@ -207,8 +221,41 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const getStatus = (item: ChecklistItem) =>
     (getCompletion(item)?.approval_status ?? "pending") as keyof typeof STATUS_CONFIG;
 
-  const filtered = (items: ChecklistItem[]) =>
-    filter === "all" ? items : items.filter((i) => getStatus(i) === filter);
+  const matchesSearch = (item: ChecklistItem) => {
+    const q = search.trim().toLowerCase();
+    if (!q) return true;
+    const completion = getCompletion(item);
+    const title = String(item.item_name ?? "").toLowerCase();
+    const notes = String(completion?.notes ?? "").toLowerCase();
+    const files = (completion?.file_names ?? []).join(" ").toLowerCase();
+    return title.includes(q) || notes.includes(q) || files.includes(q);
+  };
+
+  const isOverdue = (item: ChecklistItem) => {
+    const dueOffset = (item as any).due_offset_days;
+    if (dueOffset === undefined || dueOffset === null || !targetDate) return false;
+    const d = new Date(targetDate);
+    d.setDate(d.getDate() + dueOffset);
+    return d.getTime() < Date.now() && getStatus(item) !== "approved";
+  };
+
+  const withQuickFilters = (item: ChecklistItem) => {
+    if (quickFilters.size === 0) return true;
+    const assignedToMe = quickFilters.has("mine") ? String((item as any).assigned_to ?? "") === String(user?.id ?? "") : true;
+    const overdue = quickFilters.has("overdue") ? isOverdue(item) : true;
+    const requiresFile = quickFilters.has("requires_file") ? (item as any).has_deliverable !== false : true;
+    const waitingApproval = quickFilters.has("waiting_approval") ? getStatus(item) === "submitted" : true;
+    return assignedToMe && overdue && requiresFile && waitingApproval;
+  };
+
+  const filtered = (items: ChecklistItem[]) => {
+    const base = (filter === "all" ? items : items.filter((i) => getStatus(i) === filter))
+      .filter(matchesSearch)
+      .filter(withQuickFilters);
+
+    if (!prioritySort) return base;
+    return [...base].sort((a: any, b: any) => (PRIORITY_SCORE[String(b.priority ?? "low")] ?? 1) - (PRIORITY_SCORE[String(a.priority ?? "low")] ?? 1));
+  };
 
   const groupProgress = (items: ChecklistItem[]) => {
     const approved = items.filter((i) => getStatus(i) === "approved").length;
@@ -396,14 +443,16 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   };
 
   const dueDateLabel = (offsetDays?: number | null) => {
-    if (offsetDays === undefined || offsetDays === null || !targetDate) return null;
+    if (offsetDays === undefined || offsetDays === null || !targetDate) return <span className="text-slate-400">No due date</span>;
     const d = new Date(targetDate);
     d.setDate(d.getDate() + offsetDays);
     const diff = Math.round((d.getTime() - Date.now()) / (1000 * 60 * 60 * 24));
-    const label = d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
-    if (diff < 0) return <span className="text-red-500 font-medium">⚠️ Overdue ({label})</span>;
-    if (diff <= 3) return <span className="text-amber-600 font-medium">🔥 Due {label} ({diff}d)</span>;
-    return <span className="text-slate-500">📅 Due {label}</span>;
+    const abs = d.toLocaleDateString("en-GB", { day: "numeric", month: "short" });
+    if (diff < 0) return <span className="text-red-500 font-medium">Overdue {Math.abs(diff)}d ({abs})</span>;
+    if (diff === 0) return <span className="text-amber-600 font-medium">Today ({abs})</span>;
+    if (diff === 1) return <span className="text-amber-600 font-medium">Tomorrow ({abs})</span>;
+    if (diff <= 3) return <span className="text-amber-600 font-medium">Due in {diff}d ({abs})</span>;
+    return <span className="text-slate-500">{abs}</span>;
   };
 
   const handleArchive = async (item: ChecklistItem) => {
@@ -436,7 +485,8 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
       due_offset_days: (item as any).due_offset_days === null || (item as any).due_offset_days === undefined ? "" : String((item as any).due_offset_days),
       deliverable_type: String((item as any).deliverable_type ?? ((item as any).has_deliverable === false ? "none" : "document")),
       deliverable_custom: String((item as any).deliverable_custom ?? ""),
-    });
+      priority: String((item as any).priority ?? "medium"),
+    } as any);
   };
 
   const saveEditModal = async () => {
@@ -462,6 +512,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
       deliverable_type: editForm.deliverable_type,
       deliverable_custom: editForm.deliverable_type === "custom" ? (editForm.deliverable_custom.trim() || null) : null,
       has_deliverable: editForm.deliverable_type !== "none",
+      priority: (editForm as any).priority ?? "medium",
     } as any);
 
     setEditingTask(null);
@@ -547,18 +598,44 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
         </div>
       </div>
 
-      {/* Filter bar */}
-      <div className="flex flex-wrap gap-2">
-        {(["all", "pending", "submitted", "approved", "rejected"] as Filter[]).map((f) => (
-          <button key={f} onClick={() => setFilter(f)}
-            className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
-              filter === f ? "bg-slate-900 text-white" : "bg-white border text-slate-500 hover:text-slate-800"
-            }`}>
-            {f === "all" ? `All (${activeChecklist.length})` :
-             f === "submitted" ? `Pending (${activeChecklist.filter(i => getStatus(i) === "submitted").length})` :
-             `${f.charAt(0).toUpperCase() + f.slice(1)} (${activeChecklist.filter(i => getStatus(i) === f).length})`}
-          </button>
-        ))}
+      {/* Filter/Search/View bar */}
+      <div className="space-y-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <button onClick={() => setDisplayMode("detailed")} className={`rounded-lg px-3 py-1.5 text-xs ${displayMode === "detailed" ? "bg-slate-900 text-white" : "border bg-white text-slate-600"}`}>Detailed</button>
+          <button onClick={() => setDisplayMode("table")} className={`rounded-lg px-3 py-1.5 text-xs ${displayMode === "table" ? "bg-slate-900 text-white" : "border bg-white text-slate-600"}`}>Compact Table</button>
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search title, notes, files" className="min-w-[220px] rounded-lg border px-3 py-1.5 text-xs" />
+          <button onClick={() => setPrioritySort((v) => !v)} className={`rounded-lg px-3 py-1.5 text-xs ${prioritySort ? "bg-indigo-100 text-indigo-700" : "border bg-white text-slate-600"}`}>Sort by Priority</button>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {(["all", "pending", "submitted", "approved", "rejected"] as Filter[]).map((f) => (
+            <button key={f} onClick={() => setFilter(f)}
+              className={`rounded-full px-3 py-1 text-xs font-medium capitalize transition ${
+                filter === f ? "bg-slate-900 text-white" : "bg-white border text-slate-500 hover:text-slate-800"
+              }`}>
+              {f === "all" ? `All (${activeChecklist.length})` :
+               f === "submitted" ? `Pending (${activeChecklist.filter(i => getStatus(i) === "submitted").length})` :
+               `${f.charAt(0).toUpperCase() + f.slice(1)} (${activeChecklist.filter(i => getStatus(i) === f).length})`}
+            </button>
+          ))}
+          {([
+            ["mine", "My items"],
+            ["overdue", "Overdue"],
+            ["requires_file", "Requires file upload"],
+            ["waiting_approval", "Waiting for approval"],
+          ] as const).map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setQuickFilters((prev) => {
+                const next = new Set(prev);
+                next.has(key as QuickFilter) ? next.delete(key as QuickFilter) : next.add(key as QuickFilter);
+                return next;
+              })}
+              className={`rounded-full px-3 py-1 text-xs ${quickFilters.has(key as QuickFilter) ? "bg-cyan-100 text-cyan-700" : "border bg-white text-slate-600"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       {canSubmit && (
@@ -578,8 +655,62 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
         </div>
       )}
 
-      {/* Groups */}
-      {Object.entries(groups).map(([groupName, items]) => {
+      {displayMode === "table" ? (
+        <div className="overflow-hidden rounded-xl border bg-white">
+          <table className="min-w-full text-sm">
+            <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-4 py-3">Item Name</th>
+                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">Assignee</th>
+                <th className="px-4 py-3">Due Date</th>
+                <th className="px-4 py-3">Priority</th>
+                <th className="px-4 py-3">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
+              {filtered(activeChecklist).map((item: any) => {
+                const status = getStatus(item);
+                const completion = getCompletion(item);
+                const priority = String(item.priority ?? "medium");
+                return (
+                  <tr key={item.id} className="hover:bg-slate-50">
+                    <td className="px-4 py-3 font-medium">
+                      <input
+                        defaultValue={item.item_name}
+                        onBlur={(e) => e.target.value.trim() && handleQuickEdit(item, { item_name: e.target.value.trim() })}
+                        className="w-full rounded border px-2 py-1 text-sm"
+                      />
+                    </td>
+                    <td className="px-4 py-3"><span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_CONFIG[status].color}`}>{STATUS_CONFIG[status].label}</span></td>
+                    <td className="px-4 py-3 text-xs text-slate-600">{item.assigned_to ? (teamMembers.find((u) => u.id === item.assigned_to)?.full_name ?? item.assignee_role) : (item.assignee_role ?? "—")}</td>
+                    <td className="px-4 py-3 text-xs">{dueDateLabel(item.due_offset_days)}</td>
+                    <td className="px-4 py-3">
+                      <select value={priority} onChange={(e) => handleQuickEdit(item, { priority: e.target.value as any })}
+                        className={`rounded-full px-2 py-0.5 text-xs ${PRIORITY_PILL[priority] ?? PRIORITY_PILL.medium}`}>
+                        {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex gap-1">
+                        {isAdmin && status === "submitted" && <button onClick={() => handleApprove(item)} className="rounded border px-2 py-1 text-xs text-green-700">Approve</button>}
+                        {isAdmin && status === "submitted" && <button onClick={() => { setRejectingId(item.id); setExpandedItem(item.id); }} className="rounded border px-2 py-1 text-xs text-red-700">Reject</button>}
+                        {(item.has_deliverable !== false) && status !== "approved" && status !== "submitted" && canSubmit && <button onClick={() => setExpandedItem(item.id)} className="rounded border px-2 py-1 text-xs text-blue-700">Add file</button>}
+                        <button onClick={() => openEditModal(item)} className="rounded border px-2 py-1 text-xs text-slate-600">Comment/Edit</button>
+                      </div>
+                      {(completion?.file_names?.length ?? 0) > 0 && (
+                        <p className="mt-1 text-xs text-slate-500">📎 {completion.file_names[0]}</p>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+      /* Groups */
+      Object.entries(groups).map(([groupName, items]) => {
         const visibleItems = filtered(items);
         if (visibleItems.length === 0 && filter !== "all") return null;
         const gp = groupProgress(items);
@@ -866,7 +997,8 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
             )}
           </div>
         );
-      })}
+      })
+      )}
 
       {showArchived && (
         <div className="rounded-xl border bg-white p-4">
@@ -929,6 +1061,12 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                 <select value={editForm.required ? "yes" : "no"} onChange={(e) => setEditForm((p) => ({ ...p, required: e.target.value === "yes" }))} className="w-full rounded-lg border px-3 py-2 text-sm">
                   <option value="yes">Required</option>
                   <option value="no">Optional</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Priority</label>
+                <select value={String((editForm as any).priority ?? "medium")} onChange={(e) => setEditForm((p: any) => ({ ...p, priority: e.target.value }))} className="w-full rounded-lg border px-3 py-2 text-sm">
+                  {PRIORITIES.map((p) => <option key={p} value={p}>{p}</option>)}
                 </select>
               </div>
               <div>
