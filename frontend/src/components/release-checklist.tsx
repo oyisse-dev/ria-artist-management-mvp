@@ -526,9 +526,15 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
       setDigestMsg(null);
       const { data, error } = await supabase.functions.invoke("checklist-digest", { body: { kind } });
       if (error) throw error;
-      setDigestMsg(`Digest queued: ${data?.count ?? 0} items (${kind})`);
+      const label = kind === "pending_approval" ? "Review Queue Summary" : "Assigned Work Summary";
+      setDigestMsg(`${label} generated: ${data?.count ?? 0} items.`);
     } catch (e) {
-      setDigestMsg(`Digest failed: ${e instanceof Error ? e.message : "unknown error"}`);
+      const msg = e instanceof Error ? e.message : "unknown error";
+      if (msg.toLowerCase().includes("failed to send a request")) {
+        setDigestMsg("Digest service unreachable. Likely cause: checklist-digest Edge Function is not deployed yet.");
+      } else {
+        setDigestMsg(`Digest failed: ${msg}`);
+      }
     } finally {
       setDigestSending(false);
     }
@@ -767,14 +773,16 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-white p-3">
-        <p className="text-xs font-medium text-slate-600">Reminder Digests</p>
+        <p className="text-xs font-medium text-slate-600">Reminder Summaries</p>
         <button onClick={() => triggerDigest("pending_approval")} disabled={digestSending}
+          title="Generate summary of checklist items waiting approval"
           className="rounded border px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-          Send Pending Approval Digest
+          Generate Review Queue Summary
         </button>
         <button onClick={() => triggerDigest("assigned_digest")} disabled={digestSending}
+          title="Generate summary of assigned checklist items not yet approved"
           className="rounded border px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50">
-          Send Assigned Items Digest
+          Generate Assigned Work Summary
         </button>
         {digestMsg && <span className="text-xs text-slate-500">{digestMsg}</span>}
       </div>
