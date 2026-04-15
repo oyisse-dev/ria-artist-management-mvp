@@ -193,6 +193,9 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [dropTargetStatus, setDropTargetStatus] = useState<string | null>(null);
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
   const [highlightItemId, setHighlightItemId] = useState<string | null>(null);
+  const [showSubmitModalFor, setShowSubmitModalFor] = useState<string | null>(null);
+  const [showReviewModalFor, setShowReviewModalFor] = useState<string | null>(null);
+  const [bulkCandidateMap, setBulkCandidateMap] = useState<Record<string, string>>({});
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameGroupValue, setRenameGroupValue] = useState("");
   const [editForm, setEditForm] = useState({
@@ -492,6 +495,27 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const getNextPendingRequired = () => {
     const pending = activeChecklist.find((i: any) => i.required && getStatus(i) !== "approved");
     return pending ?? null;
+  };
+
+  const bulkMatchFilesToItems = (files: Array<{ url: string; name: string }>) => {
+    const map: Record<string, string> = {};
+    const normalizedItems = activeChecklist.map((i: any) => ({
+      id: String(i.id),
+      title: String(i.item_name ?? "").toLowerCase(),
+    }));
+
+    for (const f of files) {
+      const name = f.name.toLowerCase();
+      let best: { id: string; score: number } | null = null;
+      for (const it of normalizedItems) {
+        let score = 0;
+        const words = it.title.split(/[^a-z0-9]+/).filter((w: string) => w.length > 3);
+        for (const w of words) if (name.includes(w)) score += 1;
+        if (!best || score > best.score) best = { id: it.id, score };
+      }
+      if (best && best.score > 0) map[f.name] = best.id;
+    }
+    setBulkCandidateMap(map);
   };
 
   const jumpToItem = (itemId: string) => {
@@ -1100,7 +1124,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                           )}
                           {/* Submit for approval */}
                           {hasDeliverable && status !== "approved" && status !== "submitted" && canSubmit && (
-                            <button onClick={() => setExpandedItem(item.id)}
+                            <button onClick={() => setShowSubmitModalFor(item.id)}
                               className="rounded-lg border border-blue-300 px-3 py-1.5 text-xs font-medium text-blue-600 hover:bg-blue-50">
                               Submit ↑
                             </button>
@@ -1108,13 +1132,9 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                           {/* Admin approve/reject */}
                           {isAdmin && status === "submitted" && (
                             <>
-                              <button onClick={() => handleApprove(item)}
+                              <button onClick={() => setShowReviewModalFor(item.id)}
                                 className="rounded-lg bg-green-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-green-700">
-                                ✓ Approve
-                              </button>
-                              <button onClick={() => { setRejectingId(item.id); setExpandedItem(item.id); }}
-                                className="rounded-lg bg-red-500 px-3 py-1.5 text-xs font-medium text-white hover:bg-red-600">
-                                ✗ Reject
+                                ✓ Approve/Reject
                               </button>
                             </>
                           )}
@@ -1163,10 +1183,16 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                             <div className="space-y-2 pt-2 border-t">
                               <FileUpload
                                 artistId={artistId}
+                                multiple
                                 label={DELIVERABLE_SPEC[item.item_name]?.label ?? "Upload Deliverable"}
                                 accept={DELIVERABLE_SPEC[item.item_name]?.accept}
                                 hint={DELIVERABLE_SPEC[item.item_name]?.hint ?? "Upload the required deliverable for this checklist item"}
                                 onUploaded={(url, name) => setUploadedFiles((f) => [...f, { url, name }])}
+                                onUploadedMany={(files) => {
+                                  bulkMatchFilesToItems(files);
+                                  // still add files for current item by default
+                                  setUploadedFiles((f) => [...f, ...files]);
+                                }}
                               />
                               {uploadedFiles.length > 0 && (
                                 <div className="flex flex-wrap gap-1">
@@ -1186,6 +1212,18 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                                 className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50">
                                 {submittingId === item.id ? "Submitting…" : "Request Approval ↑"}
                               </button>
+                            </div>
+                          )}
+
+                          {Object.keys(bulkCandidateMap).length > 0 && (
+                            <div className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs">
+                              <p className="mb-1 font-medium text-cyan-800">Bulk upload auto-match suggestions</p>
+                              <div className="space-y-1 text-cyan-700">
+                                {Object.entries(bulkCandidateMap).slice(0, 6).map(([fname, itemId]) => {
+                                  const target = activeChecklist.find((i) => i.id === itemId) as any;
+                                  return <p key={fname}>📎 {fname} → {target?.item_name ?? "(unmatched)"}</p>;
+                                })}
+                              </div>
                             </div>
                           )}
 
@@ -1302,12 +1340,73 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                 </div>
               </div>
               <div>
+                <p className="text-xs text-slate-500">Global recent activity</p>
+                <div className="mt-1 space-y-1 text-xs text-slate-600">
+                  {activeChecklist.slice(0, 8).map((it: any) => {
+                    const c = getCompletion(it);
+                    if (!c) return null;
+                    return (
+                      <div key={it.id} className="rounded border px-2 py-1">
+                        <p className="font-medium text-slate-700">{it.item_name}</p>
+                        <p className="text-slate-500">{(c.approval_status ?? "pending").toUpperCase()} · {c.completed_at ? new Date(c.completed_at).toLocaleString() : "—"}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+              <div>
                 <p className="text-xs text-slate-500">Quick Actions</p>
                 <div className="mt-1 flex flex-wrap gap-2">
                   {isAdmin && getStatus(item) === "submitted" && <button onClick={() => handleApprove(item)} className="rounded border px-2 py-1 text-xs text-green-700">Approve</button>}
                   {isAdmin && getStatus(item) === "submitted" && <button onClick={() => { setRejectingId(item.id); setExpandedItem(item.id); }} className="rounded border px-2 py-1 text-xs text-red-700">Reject</button>}
                   {canSubmit && <button onClick={() => openEditModal(item)} className="rounded border px-2 py-1 text-xs text-slate-600">Edit</button>}
                 </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {showSubmitModalFor && (() => {
+        const item = activeChecklist.find((i) => i.id === showSubmitModalFor) as any;
+        if (!item) return null;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+              <h3 className="mb-3 text-lg font-semibold">Submit for Approval</h3>
+              <p className="mb-2 text-sm text-slate-600">{item.item_name}</p>
+              <p className="mb-3 text-xs text-slate-500">Files selected: {uploadedFiles.length}</p>
+              <textarea value={submitNotes} rows={3} onChange={(e) => setSubmitNotes(e.target.value)} placeholder="Optional note to approver" className="w-full rounded-lg border px-3 py-2 text-sm" />
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => setShowSubmitModalFor(null)} className="rounded-lg border px-4 py-2 text-sm text-slate-600">Cancel</button>
+                <button
+                  onClick={async () => {
+                    await handleSubmit(item);
+                    setShowSubmitModalFor(null);
+                  }}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
+                >
+                  Request Approval
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
+      {showReviewModalFor && (() => {
+        const item = activeChecklist.find((i) => i.id === showReviewModalFor) as any;
+        if (!item) return null;
+        return (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+            <div className="w-full max-w-lg rounded-2xl bg-white p-5 shadow-xl">
+              <h3 className="mb-3 text-lg font-semibold">Review Submission</h3>
+              <p className="mb-2 text-sm text-slate-600">{item.item_name}</p>
+              <textarea value={rejectReason} rows={3} onChange={(e) => setRejectReason(e.target.value)} placeholder="Reason (required for reject)" className="w-full rounded-lg border px-3 py-2 text-sm" />
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => setShowReviewModalFor(null)} className="rounded-lg border px-4 py-2 text-sm text-slate-600">Cancel</button>
+                <button onClick={async () => { await handleApprove(item); setShowReviewModalFor(null); }} className="rounded-lg bg-green-600 px-4 py-2 text-sm font-medium text-white">Approve</button>
+                <button onClick={async () => { if (!rejectReason.trim()) return alert("Enter rejection reason"); await handleReject(item); setShowReviewModalFor(null); }} className="rounded-lg bg-red-500 px-4 py-2 text-sm font-medium text-white">Reject</button>
               </div>
             </div>
           </div>
