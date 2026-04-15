@@ -1398,12 +1398,12 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
         if (!item) return null;
         const isMobile = typeof window !== "undefined" ? window.innerWidth < 768 : false;
         return (
-          <div className={isMobile ? "fixed inset-x-0 bottom-0 z-50 w-full max-h-[75vh] overflow-y-auto rounded-t-2xl border-t bg-white shadow-2xl" : "fixed inset-y-0 right-0 z-50 w-full max-w-md border-l bg-white shadow-2xl"}>
+          <div className={isMobile ? "fixed inset-x-0 bottom-0 z-50 flex w-full max-h-[75vh] flex-col overflow-hidden rounded-t-2xl border-t bg-white shadow-2xl" : "fixed inset-y-0 right-0 z-50 flex h-screen w-full max-w-md flex-col border-l bg-white shadow-2xl"}>
             <div className="flex items-center justify-between border-b px-4 py-3">
               <h4 className="font-semibold text-slate-800">Checklist Details</h4>
               <button onClick={() => setDetailItemId(null)} className="rounded border px-2 py-1 text-xs text-slate-600">Close</button>
             </div>
-            <div className="space-y-3 overflow-y-auto p-4 text-sm">
+            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4 text-sm overscroll-contain">
               <div>
                 <p className="text-xs text-slate-500">Title</p>
                 <p className="font-medium text-slate-800">{item.item_name}</p>
@@ -1530,7 +1530,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
       })()}
 
       {digestPanelOpen && (
-        <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md border-l bg-white shadow-2xl">
+        <div className="fixed inset-y-0 right-0 z-50 flex h-screen w-full max-w-md flex-col border-l bg-white shadow-2xl">
           <div className="flex items-center justify-between border-b px-4 py-3">
             <div>
               <h4 className="font-semibold text-slate-800">{digestPanelKind === "pending_approval" ? "Review Queue Summary" : "Assigned Work Summary"}</h4>
@@ -1538,7 +1538,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
             </div>
             <button onClick={() => setDigestPanelOpen(false)} className="rounded border px-2 py-1 text-xs text-slate-600">Close</button>
           </div>
-          <div className="space-y-2 overflow-y-auto p-4 text-sm">
+          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto p-4 text-sm overscroll-contain">
             {digestPanelItems.length === 0 && (
               <div className="rounded-lg border border-dashed p-4 text-center text-xs text-slate-400">No items matched this summary right now.</div>
             )}
