@@ -62,7 +62,7 @@ export function ProjectDetailPage() {
 
       const checklistRes = results[0];
       if (checklistRes.status === "fulfilled") setChecklist(checklistRes.value as ChecklistItem[]);
-      else sectionErrors.push("checklist");
+      else sectionErrors.push(`checklist (${checklistRes.reason?.message ?? "query failed"})`);
 
       const txRes = results[1];
       if (txRes.status === "fulfilled") setTransactions((txRes.value as any).data ?? []);
