@@ -50,19 +50,39 @@ export function ProjectDetailPage() {
       const p = await fetchProject(id);
       setProject(p); // set early so partial downstream failures don't show "Project not found"
 
-      const [cl, tx, al, u, assign] = await Promise.all([
+      const results = await Promise.allSettled([
         fetchProjectChecklist(id, { includeArchived: true }),
         supabase.from("transactions").select("*").eq("project_id", id).order("date", { ascending: false }),
-        fetchAuditLog("projects", id),
+        (user?.role === "admin" || user?.role === "manager") ? fetchAuditLog("projects", id) : Promise.resolve([]),
         fetchUsers(),
         supabase.from("artist_assignments").select("*, users(id, full_name, role)").eq("artist_id", p.artist_id),
       ]);
 
-      setChecklist(cl);
-      setTransactions(tx.data ?? []);
-      setAuditLog(al);
-      setTeamMembers(u);
-      setAssignments(assign.data ?? []);
+      const sectionErrors: string[] = [];
+
+      const checklistRes = results[0];
+      if (checklistRes.status === "fulfilled") setChecklist(checklistRes.value as ChecklistItem[]);
+      else sectionErrors.push("checklist");
+
+      const txRes = results[1];
+      if (txRes.status === "fulfilled") setTransactions((txRes.value as any).data ?? []);
+      else sectionErrors.push("finance");
+
+      const auditRes = results[2];
+      if (auditRes.status === "fulfilled") setAuditLog((auditRes.value as any) ?? []);
+      else sectionErrors.push("audit");
+
+      const usersRes = results[3];
+      if (usersRes.status === "fulfilled") setTeamMembers((usersRes.value as any) ?? []);
+      else sectionErrors.push("users");
+
+      const assignRes = results[4];
+      if (assignRes.status === "fulfilled") setAssignments((assignRes.value as any).data ?? []);
+      else sectionErrors.push("assignments");
+
+      if (sectionErrors.length) {
+        setError(`Some sections failed: ${sectionErrors.join(", ")}`);
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Failed to load project data";
       setError(msg);
