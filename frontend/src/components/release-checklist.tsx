@@ -165,6 +165,18 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [newGroupName, setNewGroupName] = useState("");
+  const [editingTask, setEditingTask] = useState<ChecklistItem | null>(null);
+  const [editForm, setEditForm] = useState({
+    item_name: "",
+    description: "",
+    group_name: "General",
+    assignee_role: "",
+    assigned_to: "",
+    required: true,
+    due_offset_days: "",
+    deliverable_type: "document",
+    deliverable_custom: "",
+  });
 
   const activeChecklist = checklist.filter((i: any) => !i.archived_at);
   const archivedChecklist = checklist.filter((i: any) => !!i.archived_at);
@@ -410,6 +422,50 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     await onRefresh();
   };
 
+  const openEditModal = (item: ChecklistItem) => {
+    setEditingTask(item);
+    setEditForm({
+      item_name: item.item_name ?? "",
+      description: (item as any).description ?? "",
+      group_name: (item as any).group_name ?? "General",
+      assignee_role: (item as any).assignee_role ?? "",
+      assigned_to: String((item as any).assigned_to ?? ""),
+      required: Boolean((item as any).required ?? true),
+      due_offset_days: (item as any).due_offset_days === null || (item as any).due_offset_days === undefined ? "" : String((item as any).due_offset_days),
+      deliverable_type: String((item as any).deliverable_type ?? ((item as any).has_deliverable === false ? "none" : "document")),
+      deliverable_custom: String((item as any).deliverable_custom ?? ""),
+    });
+  };
+
+  const saveEditModal = async () => {
+    if (!editingTask) return;
+    const name = editForm.item_name.trim();
+    if (!name) {
+      alert("Task name is required.");
+      return;
+    }
+    if (editForm.deliverable_type === "custom" && !editForm.deliverable_custom.trim()) {
+      alert("Please enter a custom deliverable type.");
+      return;
+    }
+
+    await updateChecklistItem(editingTask.id, {
+      item_name: name,
+      description: editForm.description.trim() || null,
+      group_name: editForm.group_name.trim() || "General",
+      assignee_role: editForm.assignee_role.trim() || null,
+      assigned_to: editForm.assigned_to || null,
+      required: editForm.required,
+      due_offset_days: editForm.due_offset_days === "" ? null : Number(editForm.due_offset_days),
+      deliverable_type: editForm.deliverable_type,
+      deliverable_custom: editForm.deliverable_type === "custom" ? (editForm.deliverable_custom.trim() || null) : null,
+      has_deliverable: editForm.deliverable_type !== "none",
+    } as any);
+
+    setEditingTask(null);
+    await onRefresh();
+  };
+
   const handleCreateTask = async (groupName: string) => {
     const groupItems = groups[groupName] ?? [];
     const maxPos = groupItems.length ? Math.max(...groupItems.map((i: any) => Number(i.position ?? 0))) : 0;
@@ -612,10 +668,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                           )}
                           {canSubmit && (
                             <button
-                              onClick={() => {
-                                const next = prompt("Edit task name", item.item_name);
-                                if (next && next.trim()) handleQuickEdit(item, { item_name: next.trim() });
-                              }}
+                              onClick={() => openEditModal(item)}
                               className="rounded-lg border px-2 py-1.5 text-xs text-slate-600 hover:bg-slate-50"
                             >
                               Edit
@@ -693,47 +746,6 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                           {completion?.notes && (
                             <div className="rounded-lg bg-slate-50 px-3 py-2 text-sm text-slate-600">
                               💬 {completion.notes}
-                            </div>
-                          )}
-
-                          {canSubmit && (
-                            <div className="space-y-2 pt-2 border-t">
-                              <p className="text-xs font-medium text-slate-600">Task settings</p>
-                              <div className="grid gap-2 sm:grid-cols-2">
-                                <select
-                                  value={String((item as any).deliverable_type ?? "document")}
-                                  onChange={(e) => handleQuickEdit(item, {
-                                    deliverable_type: e.target.value,
-                                    has_deliverable: e.target.value !== "none",
-                                  })}
-                                  className="rounded-lg border px-2 py-2 text-xs"
-                                >
-                                  {DELIVERABLE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-                                </select>
-                                {(item as any).deliverable_type === "custom" && (
-                                  <input
-                                    defaultValue={String((item as any).deliverable_custom ?? "")}
-                                    onBlur={(e) => handleQuickEdit(item, { deliverable_custom: e.target.value || null })}
-                                    placeholder="Custom deliverable type"
-                                    className="rounded-lg border px-2 py-2 text-xs"
-                                  />
-                                )}
-                                <input
-                                  type="number"
-                                  defaultValue={String((item as any).due_offset_days ?? "")}
-                                  onBlur={(e) => handleQuickEdit(item, { due_offset_days: e.target.value === "" ? null : Number(e.target.value) })}
-                                  placeholder="Due offset days"
-                                  className="rounded-lg border px-2 py-2 text-xs"
-                                />
-                                <select
-                                  value={String((item as any).required ? "yes" : "no")}
-                                  onChange={(e) => handleQuickEdit(item, { required: e.target.value === "yes" })}
-                                  className="rounded-lg border px-2 py-2 text-xs"
-                                >
-                                  <option value="yes">Required</option>
-                                  <option value="no">Optional</option>
-                                </select>
-                              </div>
                             </div>
                           )}
 
@@ -817,6 +829,66 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                 </div>
               </div>
             ))}
+          </div>
+        </div>
+      )}
+
+      {editingTask && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-2xl rounded-2xl bg-white p-5 shadow-xl">
+            <h3 className="mb-4 text-lg font-semibold">Edit Checklist Task</h3>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-medium text-slate-600">Task name</label>
+                <input value={editForm.item_name} onChange={(e) => setEditForm((p) => ({ ...p, item_name: e.target.value }))} className="w-full rounded-lg border px-3 py-2 text-sm" />
+              </div>
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-xs font-medium text-slate-600">Description</label>
+                <textarea value={editForm.description} onChange={(e) => setEditForm((p) => ({ ...p, description: e.target.value }))} rows={3} className="w-full rounded-lg border px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Category</label>
+                <input value={editForm.group_name} onChange={(e) => setEditForm((p) => ({ ...p, group_name: e.target.value }))} className="w-full rounded-lg border px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Assigned user</label>
+                <select value={editForm.assigned_to} onChange={(e) => setEditForm((p) => ({ ...p, assigned_to: e.target.value }))} className="w-full rounded-lg border px-3 py-2 text-sm">
+                  <option value="">Unassigned</option>
+                  {teamMembers.map((m) => <option key={m.id} value={m.id}>{m.full_name} ({m.role})</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Assignee role</label>
+                <input value={editForm.assignee_role} onChange={(e) => setEditForm((p) => ({ ...p, assignee_role: e.target.value }))} className="w-full rounded-lg border px-3 py-2 text-sm" placeholder="admin / manager / finance" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Due offset days</label>
+                <input type="number" value={editForm.due_offset_days} onChange={(e) => setEditForm((p) => ({ ...p, due_offset_days: e.target.value }))} className="w-full rounded-lg border px-3 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Required</label>
+                <select value={editForm.required ? "yes" : "no"} onChange={(e) => setEditForm((p) => ({ ...p, required: e.target.value === "yes" }))} className="w-full rounded-lg border px-3 py-2 text-sm">
+                  <option value="yes">Required</option>
+                  <option value="no">Optional</option>
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-600">Deliverable type</label>
+                <select value={editForm.deliverable_type} onChange={(e) => setEditForm((p) => ({ ...p, deliverable_type: e.target.value }))} className="w-full rounded-lg border px-3 py-2 text-sm">
+                  {DELIVERABLE_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              </div>
+              {editForm.deliverable_type === "custom" && (
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-600">Custom deliverable</label>
+                  <input value={editForm.deliverable_custom} onChange={(e) => setEditForm((p) => ({ ...p, deliverable_custom: e.target.value }))} className="w-full rounded-lg border px-3 py-2 text-sm" placeholder="e.g. stem package" />
+                </div>
+              )}
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button onClick={() => setEditingTask(null)} className="rounded-lg border px-4 py-2 text-sm text-slate-600 hover:bg-slate-50">Cancel</button>
+              <button onClick={saveEditModal} className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">Save changes</button>
+            </div>
           </div>
         </div>
       )}
