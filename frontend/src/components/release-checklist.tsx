@@ -560,7 +560,8 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
       setDigestPanelItems(items);
       setDigestGeneratedAt(new Date().toISOString());
       setDigestPanelOpen(true);
-      setDigestMsg(`${label} generated: ${data?.count ?? 0} items.`);
+      const dbg = data?.debug ? ` [source: ${data.debug.pendingCount ?? 0} checklist / ${data.debug.submissionsCount ?? 0} submissions]` : "";
+      setDigestMsg(`${label} generated: ${data?.count ?? 0} items.${dbg}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "unknown error";
       const m = msg.toLowerCase();
