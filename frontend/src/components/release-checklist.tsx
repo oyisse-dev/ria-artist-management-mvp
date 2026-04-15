@@ -181,6 +181,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [quickFilters, setQuickFilters] = useState<Set<QuickFilter>>(new Set());
   const [editingTask, setEditingTask] = useState<ChecklistItem | null>(null);
   const [detailItemId, setDetailItemId] = useState<string | null>(null);
+  const [dragItemId, setDragItemId] = useState<string | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameGroupValue, setRenameGroupValue] = useState("");
   const [editForm, setEditForm] = useState({
@@ -477,6 +478,11 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     return d.toISOString().slice(0, 10);
   };
 
+  const getNextPendingRequired = () => {
+    const pending = activeChecklist.find((i: any) => i.required && getStatus(i) !== "approved");
+    return pending ?? null;
+  };
+
   const dueDateLabel = (offsetDays?: number | null) => {
     if (offsetDays === undefined || offsetDays === null || !targetDate) return <span className="text-slate-400">No due date</span>;
     const d = new Date(targetDate);
@@ -633,6 +639,19 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
         </div>
       </div>
 
+      <div className="flex items-center gap-2">
+        <button
+          onClick={() => {
+            const next = getNextPendingRequired();
+            if (next) setDetailItemId(next.id);
+          }}
+          className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+        >
+          Next pending item
+        </button>
+        <p className="text-xs text-slate-400">Opens the first required item that is not approved.</p>
+      </div>
+
       {/* Filter/Search/View bar */}
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
@@ -701,7 +720,19 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
           ] as const).map(([statusKey, title]) => {
             const colItems = filtered(activeChecklist).filter((i) => getStatus(i) === statusKey);
             return (
-              <div key={statusKey} className="rounded-xl border bg-white">
+              <div
+                key={statusKey}
+                className="rounded-xl border bg-white"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={async (e) => {
+                  e.preventDefault();
+                  if (!dragItemId) return;
+                  const dragging = activeChecklist.find((i) => i.id === dragItemId);
+                  if (!dragging) return;
+                  await moveBoardItem(dragging, statusKey);
+                  setDragItemId(null);
+                }}
+              >
                 <div className="border-b px-3 py-2">
                   <p className="text-sm font-semibold text-slate-700">{title} <span className="text-xs text-slate-400">({colItems.length})</span></p>
                 </div>
@@ -710,7 +741,13 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                     const completion = getCompletion(item);
                     const priority = String(item.priority ?? "medium");
                     return (
-                      <div key={item.id} className="rounded-lg border p-2">
+                      <div
+                        key={item.id}
+                        className={`rounded-lg border p-2 ${dragItemId === item.id ? "opacity-60" : ""}`}
+                        draggable
+                        onDragStart={() => setDragItemId(item.id)}
+                        onDragEnd={() => setDragItemId(null)}
+                      >
                         <button onClick={() => setDetailItemId(item.id)} className="w-full text-left">
                           <p className="text-sm font-medium text-slate-800">{item.item_name}</p>
                           <div className="mt-1 flex flex-wrap gap-1 text-xs">
@@ -1106,8 +1143,9 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
         const item = activeChecklist.find((i) => i.id === detailItemId) as any;
         const completion = item ? getCompletion(item) : null;
         if (!item) return null;
+        const isMobile = typeof window !== "undefined" ? window.innerWidth < 768 : false;
         return (
-          <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md border-l bg-white shadow-2xl">
+          <div className={isMobile ? "fixed inset-x-0 bottom-0 z-50 w-full max-h-[75vh] overflow-y-auto rounded-t-2xl border-t bg-white shadow-2xl" : "fixed inset-y-0 right-0 z-50 w-full max-w-md border-l bg-white shadow-2xl"}>
             <div className="flex items-center justify-between border-b px-4 py-3">
               <h4 className="font-semibold text-slate-800">Checklist Details</h4>
               <button onClick={() => setDetailItemId(null)} className="rounded border px-2 py-1 text-xs text-slate-600">Close</button>
