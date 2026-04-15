@@ -146,6 +146,8 @@ export function ProjectDetailPage() {
   const progress = calcProgress(checklist);
   const completedCount = checklist.filter((i: any) => getCompletion(i)?.approval_status === "approved").length;
   const pendingApproval = checklist.filter((i: any) => getCompletion(i)?.approval_status === "submitted").length;
+  const rejectedChecklist = checklist.filter((i: any) => getCompletion(i)?.approval_status === "rejected").length;
+  const todoChecklist = Math.max(0, checklist.length - completedCount - pendingApproval - rejectedChecklist);
 
   const milestoneDays = Array.from({ length: 28 }, (_, idx) => {
     const d = new Date();
@@ -168,6 +170,12 @@ export function ProjectDetailPage() {
   });
 
   const upcomingMilestones = milestoneDays.filter((d) => d.count > 0).slice(0, 5);
+  const maxDue = Math.max(1, ...milestoneDays.map((d) => d.count));
+  const totalStatus = Math.max(1, checklist.length);
+  const approvedPct = Math.round((completedCount / totalStatus) * 100);
+  const pendingPct = Math.round((pendingApproval / totalStatus) * 100);
+  const rejectedPct = Math.round((rejectedChecklist / totalStatus) * 100);
+  const donut = `conic-gradient(#16a34a 0 ${approvedPct}%, #f59e0b ${approvedPct}% ${approvedPct + pendingPct}%, #ef4444 ${approvedPct + pendingPct}% ${approvedPct + pendingPct + rejectedPct}%, #cbd5e1 ${approvedPct + pendingPct + rejectedPct}% 100%)`;
 
   const txSummary = transactions.reduce((acc: { income: number; expense: number }, tx: any) => {
     if (tx.type === "income") acc.income += Number(tx.amount);
@@ -253,30 +261,56 @@ export function ProjectDetailPage() {
         </div>
       </div>
 
-      {/* Milestone Heatmap + Upcoming */}
-      <div className="rounded-xl border bg-white p-4">
-        <div className="mb-3 flex items-center justify-between">
-          <p className="text-sm font-medium text-slate-700">Milestone Heatmap (next 28 days)</p>
-          <p className="text-xs text-slate-400">Darker = more checklist due items</p>
-        </div>
-        <div className="grid grid-cols-14 gap-1">
-          {milestoneDays.map((d) => {
-            const intensity = d.count >= 3 ? "bg-slate-900" : d.count === 2 ? "bg-slate-600" : d.count === 1 ? "bg-slate-300" : "bg-slate-100";
-            const label = d.items.map((i: any) => i.item_name).slice(0, 3).join(", ");
-            return (
-              <div key={d.iso} title={`${d.iso} • ${d.count} due${label ? ` • ${label}` : ""}`} className={`h-4 rounded ${intensity}`} />
-            );
-          })}
+      {/* Milestone Analytics */}
+      <div className="grid gap-3 lg:grid-cols-3">
+        <div className="rounded-xl border bg-white p-4">
+          <p className="text-sm font-medium text-slate-700">Checklist Status Mix</p>
+          <div className="mt-3 flex items-center gap-4">
+            <div className="relative h-24 w-24 rounded-full" style={{ background: donut }}>
+              <div className="absolute inset-3 rounded-full bg-white" />
+              <div className="absolute inset-0 flex items-center justify-center text-xs font-semibold text-slate-700">{progress}%</div>
+            </div>
+            <div className="space-y-1 text-xs">
+              <p><span className="inline-block h-2 w-2 rounded-full bg-green-600" /> <span className="ml-1">Approved: {completedCount}</span></p>
+              <p><span className="inline-block h-2 w-2 rounded-full bg-amber-500" /> <span className="ml-1">Pending: {pendingApproval}</span></p>
+              <p><span className="inline-block h-2 w-2 rounded-full bg-red-500" /> <span className="ml-1">Rejected: {rejectedChecklist}</span></p>
+              <p><span className="inline-block h-2 w-2 rounded-full bg-slate-300" /> <span className="ml-1">To Do: {todoChecklist}</span></p>
+            </div>
+          </div>
         </div>
 
-        <div className="mt-4">
+        <div className="rounded-xl border bg-white p-4 lg:col-span-2">
+          <div className="mb-2 flex items-center justify-between">
+            <p className="text-sm font-medium text-slate-700">Milestone Timeline (next 28 days)</p>
+            <p className="text-xs text-slate-400">Interactive bars · hover for tasks</p>
+          </div>
+          <div className="space-y-1.5">
+            {milestoneDays.map((d) => {
+              const width = `${Math.max(2, Math.round((d.count / maxDue) * 100))}%`;
+              const label = d.items.map((i: any) => i.item_name).slice(0, 3).join(", ");
+              return (
+                <div key={d.iso} className="group">
+                  <div className="flex items-center gap-2 text-[11px] text-slate-500">
+                    <span className="w-20 shrink-0">{d.iso.slice(5)}</span>
+                    <div className="h-2 flex-1 rounded bg-slate-100">
+                      <div title={`${d.iso} • ${d.count} due${label ? ` • ${label}` : ""}`} className={`h-2 rounded transition-all ${d.count > 0 ? "bg-slate-700 group-hover:bg-indigo-600" : "bg-slate-200"}`} style={{ width }} />
+                    </div>
+                    <span className="w-10 text-right">{d.count}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="rounded-xl border bg-white p-4 lg:col-span-3">
           <p className="mb-2 text-xs font-medium text-slate-600">Upcoming Milestones</p>
-          <div className="space-y-1">
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
             {upcomingMilestones.length === 0 && <p className="text-xs text-slate-400">No upcoming checklist due dates in next 28 days.</p>}
             {upcomingMilestones.map((m) => (
-              <div key={m.iso} className="flex items-center justify-between rounded border px-2 py-1 text-xs">
-                <span className="font-medium text-slate-700">{m.iso}</span>
-                <span className="text-slate-500">{m.count} due item{m.count > 1 ? "s" : ""}</span>
+              <div key={m.iso} className="rounded-lg border p-2 text-xs">
+                <p className="font-semibold text-slate-700">{m.iso}</p>
+                <p className="text-slate-500">{m.count} due item{m.count > 1 ? "s" : ""}</p>
               </div>
             ))}
           </div>
