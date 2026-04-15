@@ -184,6 +184,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [dragItemId, setDragItemId] = useState<string | null>(null);
   const [dropTargetStatus, setDropTargetStatus] = useState<string | null>(null);
   const [commentDrafts, setCommentDrafts] = useState<Record<string, string>>({});
+  const [highlightItemId, setHighlightItemId] = useState<string | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameGroupValue, setRenameGroupValue] = useState("");
   const [editForm, setEditForm] = useState({
@@ -485,6 +486,17 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     return pending ?? null;
   };
 
+  const jumpToItem = (itemId: string) => {
+    const el = typeof document !== "undefined" ? document.getElementById(`check-item-${itemId}`) : null;
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightItemId(itemId);
+      setTimeout(() => setHighlightItemId((prev) => (prev === itemId ? null : prev)), 1800);
+    } else {
+      setDetailItemId(itemId);
+    }
+  };
+
   const dueDateLabel = (offsetDays?: number | null) => {
     if (offsetDays === undefined || offsetDays === null || !targetDate) return <span className="text-slate-400">No due date</span>;
     const d = new Date(targetDate);
@@ -662,7 +674,10 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
         <button
           onClick={() => {
             const next = getNextPendingRequired();
-            if (next) setDetailItemId(next.id);
+            if (next) {
+              if (displayMode === "board") setDetailItemId(next.id);
+              else jumpToItem(next.id);
+            }
           }}
           className="rounded-lg border px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
         >
@@ -729,6 +744,10 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
         </div>
       )}
 
+      <div className="text-xs text-slate-400">
+        Visible items in current filter: {filtered(activeChecklist).length} / {activeChecklist.length}
+      </div>
+
       {displayMode === "board" ? (
         <div className="grid gap-3 lg:grid-cols-4">
           {([
@@ -764,7 +783,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                     return (
                       <div
                         key={item.id}
-                        className={`rounded-lg border p-2 ${dragItemId === item.id ? "opacity-60" : ""}`}
+                        className={`rounded-lg border p-2 ${dragItemId === item.id ? "opacity-60" : ""} ${highlightItemId === item.id ? "ring-2 ring-amber-300" : ""}`}
                         draggable
                         onDragStart={() => setDragItemId(item.id)}
                         onDragEnd={() => setDragItemId(null)}
@@ -945,13 +964,13 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                   const dueOffset = (item as any).due_offset_days;
 
                   return (
-                    <div key={item.id} className={`transition ${
+                    <div id={`check-item-${item.id}`} key={item.id} className={`transition ${highlightItemId === item.id ? "ring-2 ring-amber-300" : ""} ${
                       status === "approved" ? "bg-green-50/40" :
                       status === "rejected" ? "bg-red-50/40" :
                       status === "submitted" ? "bg-amber-50/40" : ""
                     }`}>
                       {/* Item row */}
-                      <div className="flex items-center gap-3 px-4 py-3 cursor-pointer"
+                      <div className="group flex items-center gap-3 px-4 py-3 cursor-pointer"
                         onClick={() => setExpandedItem(isExpanded ? null : item.id)}>
                         {/* Status dot */}
                         <div className={`h-3 w-3 flex-shrink-0 rounded-full ${cfg.dot}`} />
@@ -988,7 +1007,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                         </div>
 
                         {/* Action buttons */}
-                        <div className="flex items-center gap-1.5 flex-shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 transition group-hover:opacity-100 group-focus-within:opacity-100" onClick={(e) => e.stopPropagation()}>
                           {/* Assign team member */}
                           {canSubmit && (
                             <select
