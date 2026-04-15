@@ -22,7 +22,7 @@ interface Props {
 }
 
 type Filter = "all" | "pending" | "submitted" | "approved" | "rejected";
-type DisplayMode = "detailed" | "table";
+type DisplayMode = "detailed" | "table" | "board";
 type QuickFilter = "mine" | "overdue" | "requires_file" | "waiting_approval";
 const DELIVERABLE_TYPES = ["audio", "artwork", "document", "video", "link", "none", "custom"] as const;
 const PRIORITIES = ["low", "medium", "high", "urgent"] as const;
@@ -180,6 +180,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [prioritySort, setPrioritySort] = useState(false);
   const [quickFilters, setQuickFilters] = useState<Set<QuickFilter>>(new Set());
   const [editingTask, setEditingTask] = useState<ChecklistItem | null>(null);
+  const [detailItemId, setDetailItemId] = useState<string | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameGroupValue, setRenameGroupValue] = useState("");
   const [editForm, setEditForm] = useState({
@@ -426,6 +427,40 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     onRefresh();
   };
 
+  const moveBoardItem = async (item: ChecklistItem, target: "pending" | "submitted" | "approved" | "rejected") => {
+    const completion = getCompletion(item);
+    if (target === "pending") {
+      await submitChecklistCompletion(item.id, { notes: completion?.notes ?? "Moved to To Do" });
+      const updated = await supabase.from("checklist_completions").update({ approval_status: "pending", approver_id: null, approved_at: null, rejection_reason: null }).eq("checklist_id", item.id);
+      if (updated.error) throw updated.error;
+      await onRefresh();
+      return;
+    }
+
+    if (target === "submitted") {
+      await submitChecklistCompletion(item.id, {
+        notes: completion?.notes ?? "Moved to Pending Approval",
+        fileUrls: completion?.file_urls ?? [],
+        fileNames: completion?.file_names ?? [],
+      });
+      await onRefresh();
+      return;
+    }
+
+    if (!completion?.id) {
+      await submitChecklistCompletion(item.id, { notes: "Auto-created before board move" });
+      await onRefresh();
+      return;
+    }
+
+    if (target === "approved") {
+      await approveChecklistItem(completion.id, true);
+    } else if (target === "rejected") {
+      await approveChecklistItem(completion.id, false, "Rejected from board");
+    }
+    await onRefresh();
+  };
+
   const handleReject = async (item: ChecklistItem) => {
     const completion = getCompletion(item);
     if (!completion || !rejectReason) return;
@@ -603,6 +638,7 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
         <div className="flex flex-wrap items-center gap-2">
           <button onClick={() => setDisplayMode("detailed")} className={`rounded-lg px-3 py-1.5 text-xs ${displayMode === "detailed" ? "bg-slate-900 text-white" : "border bg-white text-slate-600"}`}>Detailed</button>
           <button onClick={() => setDisplayMode("table")} className={`rounded-lg px-3 py-1.5 text-xs ${displayMode === "table" ? "bg-slate-900 text-white" : "border bg-white text-slate-600"}`}>Compact Table</button>
+          <button onClick={() => setDisplayMode("board")} className={`rounded-lg px-3 py-1.5 text-xs ${displayMode === "board" ? "bg-slate-900 text-white" : "border bg-white text-slate-600"}`}>Board</button>
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search title, notes, files" className="min-w-[220px] rounded-lg border px-3 py-1.5 text-xs" />
           <button onClick={() => setPrioritySort((v) => !v)} className={`rounded-lg px-3 py-1.5 text-xs ${prioritySort ? "bg-indigo-100 text-indigo-700" : "border bg-white text-slate-600"}`}>Sort by Priority</button>
         </div>
@@ -655,7 +691,49 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
         </div>
       )}
 
-      {displayMode === "table" ? (
+      {displayMode === "board" ? (
+        <div className="grid gap-3 lg:grid-cols-4">
+          {([
+            ["pending", "To Do"],
+            ["submitted", "Pending Approval"],
+            ["approved", "Approved"],
+            ["rejected", "Rejected"],
+          ] as const).map(([statusKey, title]) => {
+            const colItems = filtered(activeChecklist).filter((i) => getStatus(i) === statusKey);
+            return (
+              <div key={statusKey} className="rounded-xl border bg-white">
+                <div className="border-b px-3 py-2">
+                  <p className="text-sm font-semibold text-slate-700">{title} <span className="text-xs text-slate-400">({colItems.length})</span></p>
+                </div>
+                <div className="space-y-2 p-2">
+                  {colItems.map((item: any) => {
+                    const completion = getCompletion(item);
+                    const priority = String(item.priority ?? "medium");
+                    return (
+                      <div key={item.id} className="rounded-lg border p-2">
+                        <button onClick={() => setDetailItemId(item.id)} className="w-full text-left">
+                          <p className="text-sm font-medium text-slate-800">{item.item_name}</p>
+                          <div className="mt-1 flex flex-wrap gap-1 text-xs">
+                            <span className={`rounded-full px-2 py-0.5 ${PRIORITY_PILL[priority] ?? PRIORITY_PILL.medium}`}>{priority}</span>
+                            {item.required && <span className="rounded bg-red-50 px-1.5 py-0.5 text-red-600">Required</span>}
+                            {(completion?.file_names?.length ?? 0) > 0 && <span className="rounded bg-blue-50 px-1.5 py-0.5 text-blue-600">📎 {completion.file_names.length}</span>}
+                          </div>
+                        </button>
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {(["pending", "submitted", "approved", "rejected"] as const).filter((s) => s !== statusKey).map((s) => (
+                            <button key={s} onClick={() => moveBoardItem(item, s)} className="rounded border px-2 py-0.5 text-[11px] text-slate-600 hover:bg-slate-50">→ {s}</button>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  {colItems.length === 0 && <div className="rounded-lg border border-dashed p-3 text-center text-xs text-slate-400">No items</div>}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : displayMode === "table" ? (
         <div className="overflow-hidden rounded-xl border bg-white">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
@@ -1023,6 +1101,67 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
           </div>
         </div>
       )}
+
+      {detailItemId && (() => {
+        const item = activeChecklist.find((i) => i.id === detailItemId) as any;
+        const completion = item ? getCompletion(item) : null;
+        if (!item) return null;
+        return (
+          <div className="fixed inset-y-0 right-0 z-50 w-full max-w-md border-l bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b px-4 py-3">
+              <h4 className="font-semibold text-slate-800">Checklist Details</h4>
+              <button onClick={() => setDetailItemId(null)} className="rounded border px-2 py-1 text-xs text-slate-600">Close</button>
+            </div>
+            <div className="space-y-3 overflow-y-auto p-4 text-sm">
+              <div>
+                <p className="text-xs text-slate-500">Title</p>
+                <p className="font-medium text-slate-800">{item.item_name}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Description</p>
+                <p className="text-slate-700">{item.description || "—"}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Status</p>
+                <span className={`rounded-full px-2 py-0.5 text-xs ${STATUS_CONFIG[getStatus(item)].color}`}>{STATUS_CONFIG[getStatus(item)].label}</span>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Due</p>
+                <div>{dueDateLabel(item.due_offset_days)}</div>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Comments/Notes</p>
+                <p className="text-slate-700">{completion?.notes || "No notes yet."}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Files</p>
+                <div className="space-y-1">
+                  {(completion?.file_names ?? []).length === 0 && <p className="text-slate-400">No files uploaded.</p>}
+                  {(completion?.file_names ?? []).map((n: string, i: number) => (
+                    <a key={i} href={completion.file_urls?.[i]} target="_blank" rel="noopener noreferrer" className="block rounded border px-2 py-1 text-blue-600 hover:bg-blue-50">📎 {n}</a>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Approval History</p>
+                <ul className="list-disc pl-5 text-slate-600">
+                  <li>Status: {getStatus(item)}</li>
+                  <li>Submitted: {completion?.completed_at ? new Date(completion.completed_at).toLocaleString() : "—"}</li>
+                  <li>Approved: {completion?.approved_at ? new Date(completion.approved_at).toLocaleString() : "—"}</li>
+                </ul>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Quick Actions</p>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {isAdmin && getStatus(item) === "submitted" && <button onClick={() => handleApprove(item)} className="rounded border px-2 py-1 text-xs text-green-700">Approve</button>}
+                  {isAdmin && getStatus(item) === "submitted" && <button onClick={() => { setRejectingId(item.id); setExpandedItem(item.id); }} className="rounded border px-2 py-1 text-xs text-red-700">Reject</button>}
+                  {canSubmit && <button onClick={() => openEditModal(item)} className="rounded border px-2 py-1 text-xs text-slate-600">Edit</button>}
+                </div>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {editingTask && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
