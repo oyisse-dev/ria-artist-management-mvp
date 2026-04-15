@@ -56,7 +56,7 @@ Deno.serve(async (req) => {
       return st !== "approved";
     }).slice(0, 120);
 
-    await admin.from("checklist_reminder_log").insert({
+    const { error: insertErr } = await admin.from("checklist_reminder_log").insert({
       user_id: me.id,
       kind,
       payload: {
@@ -65,6 +65,17 @@ Deno.serve(async (req) => {
         sample: payloadItems.slice(0, 20),
       },
     });
+
+    if (insertErr) {
+      const message = String(insertErr.message ?? "").toLowerCase();
+      // Fallback: if new table/migration isn't applied yet, still return digest summary
+      if (!(message.includes("checklist_reminder_log") || message.includes("does not exist") || message.includes("relation"))) {
+        return new Response(JSON.stringify({ error: insertErr.message, code: insertErr.code ?? null }), {
+          status: 500,
+          headers: { ...cors, "Content-Type": "application/json" },
+        });
+      }
+    }
 
     return new Response(JSON.stringify({ ok: true, kind, count: payloadItems.length }), {
       status: 200,
