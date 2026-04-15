@@ -238,12 +238,28 @@ export async function createChecklistItem(body: Partial<ChecklistItem> & { proje
 }
 
 export async function updateChecklistItem(id: string, updates: Partial<ChecklistItem>) {
-  const { data, error } = await supabase
-    .from("project_checklists")
-    .update(updates)
-    .eq("id", id)
-    .select()
-    .single();
+  const attempt = async (payload: Partial<ChecklistItem>) => {
+    return await supabase
+      .from("project_checklists")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+  };
+
+  let { data, error } = await attempt(updates);
+
+  // Backward-compatible fallback for environments where new columns are not migrated yet.
+  if (error && "priority" in updates) {
+    const msg = String((error as any)?.message ?? "").toLowerCase();
+    const details = String((error as any)?.details ?? "").toLowerCase();
+    const hint = String((error as any)?.hint ?? "").toLowerCase();
+    if (msg.includes("priority") || details.includes("priority") || hint.includes("priority")) {
+      const { priority, ...withoutPriority } = updates as any;
+      ({ data, error } = await attempt(withoutPriority));
+    }
+  }
+
   if (error) throw error;
   return data;
 }

@@ -580,22 +580,28 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
       return;
     }
 
-    await updateChecklistItem(editingTask.id, {
-      item_name: name,
-      description: editForm.description.trim() || null,
-      group_name: editForm.group_name.trim() || "General",
-      assignee_role: editForm.assignee_role.trim() || null,
-      assigned_to: editForm.assigned_to || null,
-      required: editForm.required,
-      due_offset_days: editForm.due_offset_days === "" ? null : Number(editForm.due_offset_days),
-      deliverable_type: editForm.deliverable_type,
-      deliverable_custom: editForm.deliverable_type === "custom" ? (editForm.deliverable_custom.trim() || null) : null,
-      has_deliverable: editForm.deliverable_type !== "none",
-      priority: (editForm as any).priority ?? "medium",
-    } as any);
+    try {
+      await updateChecklistItem(editingTask.id, {
+        item_name: name,
+        description: editForm.description.trim() || null,
+        group_name: editForm.group_name.trim() || "General",
+        assignee_role: editForm.assignee_role.trim() || null,
+        assigned_to: editForm.assigned_to || null,
+        required: editForm.required,
+        due_offset_days: editForm.due_offset_days === "" ? null : Number(editForm.due_offset_days),
+        deliverable_type: editForm.deliverable_type,
+        deliverable_custom: editForm.deliverable_type === "custom" ? (editForm.deliverable_custom.trim() || null) : null,
+        has_deliverable: editForm.deliverable_type !== "none",
+        priority: (editForm as any).priority ?? "medium",
+      } as any);
 
-    setEditingTask(null);
-    await onRefresh();
+      setEditingTask(null);
+      await onRefresh();
+      alert("Task saved.");
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "Failed to save task";
+      alert(`Could not save task: ${msg}`);
+    }
   };
 
   const handleCreateTask = async (groupName: string) => {
