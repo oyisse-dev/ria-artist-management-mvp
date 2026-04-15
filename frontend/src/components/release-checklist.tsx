@@ -196,6 +196,8 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
   const [showSubmitModalFor, setShowSubmitModalFor] = useState<string | null>(null);
   const [showReviewModalFor, setShowReviewModalFor] = useState<string | null>(null);
   const [bulkCandidateMap, setBulkCandidateMap] = useState<Record<string, string>>({});
+  const [digestSending, setDigestSending] = useState(false);
+  const [digestMsg, setDigestMsg] = useState<string | null>(null);
   const [renamingGroup, setRenamingGroup] = useState<string | null>(null);
   const [renameGroupValue, setRenameGroupValue] = useState("");
   const [editForm, setEditForm] = useState({
@@ -518,6 +520,44 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     setBulkCandidateMap(map);
   };
 
+  const triggerDigest = async (kind: "pending_approval" | "assigned_digest") => {
+    try {
+      setDigestSending(true);
+      setDigestMsg(null);
+      const { data, error } = await supabase.functions.invoke("checklist-digest", { body: { kind } });
+      if (error) throw error;
+      setDigestMsg(`Digest queued: ${data?.count ?? 0} items (${kind})`);
+    } catch (e) {
+      setDigestMsg(`Digest failed: ${e instanceof Error ? e.message : "unknown error"}`);
+    } finally {
+      setDigestSending(false);
+    }
+  };
+
+  const applyBulkMatches = async () => {
+    const entries = Object.entries(bulkCandidateMap);
+    if (!entries.length) return;
+    for (const [fname, itemId] of entries) {
+      const file = uploadedFiles.find((f) => f.name === fname);
+      if (!file) continue;
+      const target = activeChecklist.find((i) => i.id === itemId);
+      if (!target) continue;
+      const completion = getCompletion(target);
+      const existingUrls = completion?.file_urls ?? [];
+      const existingNames = completion?.file_names ?? [];
+      const nextUrls = [...existingUrls, file.url];
+      const nextNames = [...existingNames, file.name];
+      await submitChecklistCompletion(target.id, {
+        notes: completion?.notes ?? "Bulk matched upload",
+        fileUrls: nextUrls,
+        fileNames: nextNames,
+      });
+    }
+    setBulkCandidateMap({});
+    await onRefresh();
+    alert("Bulk auto-match applied.");
+  };
+
   const jumpToItem = (itemId: string) => {
     const el = typeof document !== "undefined" ? document.getElementById(`check-item-${itemId}`) : null;
     if (el) {
@@ -726,6 +766,19 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
 
   return (
     <div className="space-y-4">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border bg-white p-3">
+        <p className="text-xs font-medium text-slate-600">Reminder Digests</p>
+        <button onClick={() => triggerDigest("pending_approval")} disabled={digestSending}
+          className="rounded border px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+          Send Pending Approval Digest
+        </button>
+        <button onClick={() => triggerDigest("assigned_digest")} disabled={digestSending}
+          className="rounded border px-2 py-1 text-xs text-slate-700 hover:bg-slate-50 disabled:opacity-50">
+          Send Assigned Items Digest
+        </button>
+        {digestMsg && <span className="text-xs text-slate-500">{digestMsg}</span>}
+      </div>
+
       {/* Summary bar */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-xl border bg-white p-3">
@@ -1219,10 +1272,24 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                             <div className="rounded-lg border border-cyan-200 bg-cyan-50 px-3 py-2 text-xs">
                               <p className="mb-1 font-medium text-cyan-800">Bulk upload auto-match suggestions</p>
                               <div className="space-y-1 text-cyan-700">
-                                {Object.entries(bulkCandidateMap).slice(0, 6).map(([fname, itemId]) => {
+                                {Object.entries(bulkCandidateMap).slice(0, 10).map(([fname, itemId]) => {
                                   const target = activeChecklist.find((i) => i.id === itemId) as any;
-                                  return <p key={fname}>📎 {fname} → {target?.item_name ?? "(unmatched)"}</p>;
+                                  return (
+                                    <div key={fname} className="flex items-center justify-between gap-2">
+                                      <span>📎 {fname}</span>
+                                      <select
+                                        value={itemId}
+                                        onChange={(e) => setBulkCandidateMap((prev) => ({ ...prev, [fname]: e.target.value }))}
+                                        className="rounded border px-1 py-0.5 text-[11px]"
+                                      >
+                                        {activeChecklist.map((i: any) => <option key={i.id} value={i.id}>{i.item_name}</option>)}
+                                      </select>
+                                    </div>
+                                  );
                                 })}
+                              </div>
+                              <div className="mt-2 flex justify-end">
+                                <button onClick={applyBulkMatches} className="rounded border px-2 py-1 text-xs text-cyan-800 hover:bg-cyan-100">Apply matches</button>
                               </div>
                             </div>
                           )}
@@ -1382,6 +1449,11 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
                 <button
                   onClick={async () => {
                     await handleSubmit(item);
+                    try {
+                      await triggerDigest("pending_approval");
+                    } catch {
+                      // non-blocking reminder hook
+                    }
                     setShowSubmitModalFor(null);
                   }}
                   className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white"
