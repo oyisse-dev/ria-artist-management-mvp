@@ -20,7 +20,7 @@ Deno.serve(async (req) => {
     const token = authHeader.replace("Bearer ", "");
     const { data: authData, error: authErr } = await admin.auth.getUser(token);
     if (authErr || !authData?.user) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), { status: 401, headers: { ...cors, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: "Unauthorized", details: authErr?.message ?? null }), { status: 401, headers: { ...cors, "Content-Type": "application/json" } });
     }
 
     const { data: me } = await admin
@@ -30,7 +30,7 @@ Deno.serve(async (req) => {
       .single();
 
     if (!me || !["admin", "manager"].includes(me.role)) {
-      return new Response(JSON.stringify({ error: "Forbidden" }), { status: 403, headers: { ...cors, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: "Forbidden", role: me?.role ?? null }), { status: 403, headers: { ...cors, "Content-Type": "application/json" } });
     }
 
     const body = await req.json().catch(() => ({}));

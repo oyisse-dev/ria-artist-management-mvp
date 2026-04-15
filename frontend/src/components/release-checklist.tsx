@@ -524,14 +524,29 @@ export function ReleaseChecklist({ checklist, projectId, artistId, targetDate, t
     try {
       setDigestSending(true);
       setDigestMsg(null);
-      const { data, error } = await supabase.functions.invoke("checklist-digest", { body: { kind } });
-      if (error) throw error;
+
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData.session?.access_token;
+
+      const { data, error } = await supabase.functions.invoke("checklist-digest", {
+        body: { kind },
+        headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : undefined,
+      });
+
+      if (error) {
+        const details = (error as any)?.context ? ` (${String((error as any).context).slice(0, 180)})` : "";
+        throw new Error(`${error.message}${details}`);
+      }
+
       const label = kind === "pending_approval" ? "Review Queue Summary" : "Assigned Work Summary";
       setDigestMsg(`${label} generated: ${data?.count ?? 0} items.`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "unknown error";
-      if (msg.toLowerCase().includes("failed to send a request")) {
+      const m = msg.toLowerCase();
+      if (m.includes("failed to send a request")) {
         setDigestMsg("Digest service unreachable. Likely cause: checklist-digest Edge Function is not deployed yet.");
+      } else if (m.includes("401") || m.includes("unauthorized") || m.includes("forbidden")) {
+        setDigestMsg("Digest failed: session/permission issue. Please sign out and sign in again, then retry.");
       } else {
         setDigestMsg(`Digest failed: ${msg}`);
       }
