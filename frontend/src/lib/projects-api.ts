@@ -276,8 +276,10 @@ export async function fetchAuditLog(tableName?: string, recordId?: string) {
 // ---- Helpers ----
 export function calcProgress(items: ChecklistItem[]): number {
   if (!items.length) return 0;
-  const done = items.filter(
-    (i) => i.checklist_completions?.[0]?.approval_status === "approved"
-  ).length;
+  const done = items.filter((i: any) => {
+    const c = i?.checklist_completions;
+    const completion = Array.isArray(c) ? c[0] : c;
+    return completion?.approval_status === "approved";
+  }).length;
   return Math.round((done / items.length) * 100);
 }

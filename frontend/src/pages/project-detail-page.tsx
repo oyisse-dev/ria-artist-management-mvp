@@ -109,9 +109,15 @@ export function ProjectDetailPage() {
     }
   };
 
+  const getCompletion = (item: any) => {
+    const c = item?.checklist_completions;
+    if (!c) return undefined;
+    return Array.isArray(c) ? c[0] : c;
+  };
+
   const progress = calcProgress(checklist);
-  const completedCount = checklist.filter((i) => i.checklist_completions?.[0]?.approval_status === "approved").length;
-  const pendingApproval = checklist.filter((i) => i.checklist_completions?.[0]?.approval_status === "submitted").length;
+  const completedCount = checklist.filter((i: any) => getCompletion(i)?.approval_status === "approved").length;
+  const pendingApproval = checklist.filter((i: any) => getCompletion(i)?.approval_status === "submitted").length;
 
   const txSummary = transactions.reduce((acc: { income: number; expense: number }, tx: any) => {
     if (tx.type === "income") acc.income += Number(tx.amount);
@@ -221,7 +227,7 @@ export function ProjectDetailPage() {
       )}
 
       {tab === "assets" && (
-        <ProjectAssetsTab projectId={project.id} artistId={project.artist_id} />
+        <ProjectAssetsTab projectId={project.id} refreshKey={refreshNonce} />
       )}
 
       {tab === "finance" && (
@@ -392,13 +398,13 @@ export function ProjectDetailPage() {
   );
 }
 
-function ProjectAssetsTab({ projectId, artistId }: { projectId: string; artistId: string }) {
+function ProjectAssetsTab({ projectId, refreshKey }: { projectId: string; refreshKey: number }) {
   const [assets, setAssets] = useState<Array<{ name: string; url: string; item: string }>>([]);
 
   const loadAssets = async () => {
     const { data, error } = await supabase
       .from("project_checklists")
-      .select("item_name, checklist_completions(file_names, file_urls)")
+      .select("item_name, checklist_completions(file_names, file_urls, approval_status)")
       .eq("project_id", projectId);
 
     if (error) {
@@ -409,7 +415,9 @@ function ProjectAssetsTab({ projectId, artistId }: { projectId: string; artistId
 
     const mapped: Array<{ name: string; url: string; item: string }> = [];
     for (const row of (data ?? []) as any[]) {
-      const completion = row.checklist_completions?.[0];
+      const c = row?.checklist_completions;
+      const completion = Array.isArray(c) ? c[0] : c;
+      if (completion?.approval_status !== "approved") continue;
       const names = completion?.file_names ?? [];
       const urls = completion?.file_urls ?? [];
       for (let i = 0; i < names.length; i++) {
@@ -421,18 +429,16 @@ function ProjectAssetsTab({ projectId, artistId }: { projectId: string; artistId
     setAssets(mapped);
   };
 
-  useEffect(() => { loadAssets(); }, [projectId]);
+  useEffect(() => { loadAssets(); }, [projectId, refreshKey]);
 
   return (
     <div className="space-y-4">
       <div className="rounded-xl border bg-white p-5">
-        <h3 className="mb-3 font-semibold">Upload Asset</h3>
-        <FileUpload artistId={artistId} onUploaded={async () => {
-          await loadAssets();
-        }} />
+        <h3 className="mb-3 font-semibold">Approved Assets</h3>
+        <p className="text-sm text-slate-500">Only files from approved checklist items appear here.</p>
       </div>
       <div>
-        <h3 className="mb-3 font-semibold text-slate-700">All Project Assets</h3>
+        <h3 className="mb-3 font-semibold text-slate-700">All Approved Project Assets</h3>
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {assets.map((asset, i) => (
             <a key={i} href={asset.url} target="_blank" rel="noopener noreferrer"
