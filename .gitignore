@@ -4,6 +4,8 @@ node_modules
 dist
 build
 coverage
+*.tsbuildinfo
+supabase/.temp/
 samconfig.toml
 .aws-sam
 .DS_Store
