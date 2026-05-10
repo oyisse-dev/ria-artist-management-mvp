@@ -20,7 +20,14 @@ export type TransactionWithJoins = Transaction & { artist?: Pick<Artist, "id" | 
 export type BookingWithJoins = Booking & { artist?: Pick<Artist, "id" | "stage_name"> | null; project?: Pick<Project, "id" | "title"> | null };
 
 function throwIf(error: unknown) {
-  if (error) throw error;
+  if (!error) return;
+  if (error instanceof Error) throw error;
+  if (typeof error === "object" && error !== null) {
+    const details = error as { message?: string; details?: string; hint?: string; code?: string };
+    const parts = [details.message, details.details, details.hint, details.code].filter(Boolean);
+    throw new Error(parts.join(" ") || "Supabase request failed");
+  }
+  throw new Error(String(error));
 }
 
 export async function getCurrentProfile() {
@@ -135,7 +142,7 @@ export async function updateProject(id: string, payload: Partial<Project>) {
 export async function listProjectChecklist(projectId: string) {
   const { data: checklists, error } = await supabase
     .from("project_checklists")
-    .select("*, assignee:users(id,full_name,email,role,created_at)")
+    .select("*, assignee:users!project_checklists_assigned_to_fkey(id,full_name,email,role,created_at)")
     .eq("project_id", projectId)
     .is("archived_at", null)
     .order("group_name")
@@ -217,7 +224,7 @@ export async function uploadPrivateFile(bucket: "contracts" | "receipts" | "phot
 export async function listTasks() {
   const { data, error } = await supabase
     .from("tasks")
-    .select("*, artist:artists(id,stage_name), assignee:users(id,full_name), project:projects(id,title)")
+    .select("*, artist:artists(id,stage_name), assignee:users!tasks_assigned_to_fkey(id,full_name), project:projects(id,title)")
     .order("due_date", { ascending: true, nullsFirst: false });
   throwIf(error);
   return (data ?? []) as TaskWithJoins[];
