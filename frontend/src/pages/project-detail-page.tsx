@@ -1,11 +1,13 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { archiveChecklistItem, createTransaction, getProject, listAuditLogs, listProjectAssets, listProjectChecklist, listTransactions, saveChecklistCompletion, signedAssetUrl, updateProject, uploadProjectAsset } from "../lib/api";
+import { archiveChecklistItem, createTransaction, getErrorMessage, getProject, listAuditLogs, listProjectAssets, listProjectChecklist, listTransactions, saveChecklistCompletion, signedAssetUrl, updateProject, uploadProjectAsset } from "../lib/api";
 import type { ChecklistWithCompletion, ProjectWithArtist, TransactionWithJoins } from "../lib/api";
 import type { AuditLog } from "../lib/database.types";
 import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, Select, StatusPill, Textarea } from "../components/ui";
+import { useAuthStore } from "../context/auth-store";
 
 export function ProjectDetailPage() {
+  const { role } = useAuthStore();
   const { id = "" } = useParams();
   const [project, setProject] = useState<ProjectWithArtist | null>(null);
   const [checklist, setChecklist] = useState<ChecklistWithCompletion[]>([]);
@@ -52,6 +54,9 @@ export function ProjectDetailPage() {
   if (error) return <ErrorState message={error} />;
   if (!project) return <EmptyState>Project not found.</EmptyState>;
 
+  const canManageProject = role === "admin" || role === "manager";
+  const canUseChecklist = role === "admin" || role === "manager";
+
   return (
     <section>
       <PageHeader title={project.title} eyebrow={`${project.artist?.stage_name ?? "Artist"} · ${project.type}`} />
@@ -68,7 +73,7 @@ export function ProjectDetailPage() {
             </div>
             <p className="mt-2 text-sm text-slate-600">{project.progress ?? 0}% complete</p>
           </div>
-          <StatusForm project={project} reload={load} />
+          {canManageProject ? <StatusForm project={project} reload={load} /> : <p className="text-sm text-slate-500">Finance has read-only project access.</p>}
         </div>
       </Panel>
       <div className="mb-5 flex flex-wrap gap-2">
@@ -76,9 +81,9 @@ export function ProjectDetailPage() {
           <button key={item} className={`rounded-md px-3 py-2 text-sm capitalize ${tab === item ? "bg-slate-950 text-white" : "bg-white"}`} onClick={() => setTab(item)}>{item}</button>
         ))}
       </div>
-      {tab === "checklist" && <ChecklistTab checklist={checklist} project={project} reload={load} />}
-      {tab === "assets" && <AssetsTab project={project} assets={assets} reload={load} />}
-      {tab === "marketing" && <ChecklistTab checklist={checklist.filter((item) => (item.group_name ?? "").toLowerCase().includes("marketing"))} project={project} reload={load} />}
+      {tab === "checklist" && <ChecklistTab checklist={checklist} project={project} reload={load} canEdit={canUseChecklist} />}
+      {tab === "assets" && <AssetsTab project={project} assets={assets} reload={load} canUpload={canUseChecklist} />}
+      {tab === "marketing" && <ChecklistTab checklist={checklist.filter((item) => (item.group_name ?? "").toLowerCase().includes("marketing"))} project={project} reload={load} canEdit={canUseChecklist} />}
       {tab === "finance" && <FinanceTab project={project} finance={finance} transactions={transactions} reload={load} />}
       {tab === "team" && <TeamTab checklist={checklist} />}
       {tab === "audit" && <AuditTab audit={audit} />}
@@ -87,23 +92,34 @@ export function ProjectDetailPage() {
 }
 
 function StatusForm({ project, reload }: { project: ProjectWithArtist; reload: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await updateProject(project.id, { status: String(form.get("status")), target_date: String(form.get("target_date") || "") || null, budget_estimate: Number(form.get("budget_estimate") || 0) });
-    await reload();
+    setSaving(true);
+    setError("");
+    try {
+      await updateProject(project.id, { status: String(form.get("status")), target_date: String(form.get("target_date") || "") || null, budget_estimate: Number(form.get("budget_estimate") || 0) });
+      await reload();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not update project"));
+    } finally {
+      setSaving(false);
+    }
   }
   return (
     <form onSubmit={submit} className="grid gap-2">
       <Select name="status" defaultValue={project.status}>{["planning","pre_production","recording","mix_master","asset_collection","qc","distribution","live","completed"].map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</Select>
       <Input name="target_date" type="date" defaultValue={project.target_date ?? ""} />
       <Input name="budget_estimate" type="number" defaultValue={project.budget_estimate ?? 0} />
-      <Button>Update Project</Button>
+      {error && <p className="text-sm text-red-700">{error}</p>}
+      <Button disabled={saving}>{saving ? "Saving..." : "Update Project"}</Button>
     </form>
   );
 }
 
-function ChecklistTab({ checklist, project, reload }: { checklist: ChecklistWithCompletion[]; project: ProjectWithArtist; reload: () => Promise<void> }) {
+function ChecklistTab({ checklist, project, reload, canEdit }: { checklist: ChecklistWithCompletion[]; project: ProjectWithArtist; reload: () => Promise<void>; canEdit: boolean }) {
   const groups = checklist.reduce<Record<string, ChecklistWithCompletion[]>>((acc, item) => {
     const key = item.group_name ?? "General";
     acc[key] = [...(acc[key] ?? []), item];
@@ -115,7 +131,7 @@ function ChecklistTab({ checklist, project, reload }: { checklist: ChecklistWith
         <Panel key={group}>
           <h3 className="font-semibold">{group}</h3>
           <div className="mt-3 grid gap-3">
-            {items.map((item) => <ChecklistRow key={item.id} item={item} project={project} reload={reload} />)}
+            {items.map((item) => <ChecklistRow key={item.id} item={item} project={project} reload={reload} canEdit={canEdit} />)}
           </div>
         </Panel>
       ))}
@@ -124,50 +140,73 @@ function ChecklistTab({ checklist, project, reload }: { checklist: ChecklistWith
   );
 }
 
-function ChecklistRow({ item, project, reload }: { item: ChecklistWithCompletion; project: ProjectWithArtist; reload: () => Promise<void> }) {
+function ChecklistRow({ item, project, reload, canEdit }: { item: ChecklistWithCompletion; project: ProjectWithArtist; reload: () => Promise<void>; canEdit: boolean }) {
   const status = item.completion?.approval_status ?? "pending";
+  const [error, setError] = useState("");
   async function upload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    const path = await uploadProjectAsset(project, file, "checklist");
-    await saveChecklistCompletion(item.id, { file_urls: [...(item.completion?.file_urls ?? []), path], file_names: [...(item.completion?.file_names ?? []), file.name], approval_status: "submitted", completed_at: new Date().toISOString() });
-    await reload();
+    setError("");
+    try {
+      const path = await uploadProjectAsset(project, file, "checklist");
+      await saveChecklistCompletion(item.id, { file_urls: [...(item.completion?.file_urls ?? []), path], file_names: [...(item.completion?.file_names ?? []), file.name], approval_status: "submitted", completed_at: new Date().toISOString() });
+      await reload();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not upload checklist file"));
+    }
   }
   async function setStatus(next: string) {
-    await saveChecklistCompletion(item.id, { approval_status: next, approved_at: next === "approved" ? new Date().toISOString() : null, rejection_comment: next === "rejected" ? "Needs revision" : null });
-    await reload();
+    setError("");
+    try {
+      await saveChecklistCompletion(item.id, { approval_status: next, approved_at: next === "approved" ? new Date().toISOString() : null, rejection_comment: next === "rejected" ? "Needs revision" : null });
+      await reload();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not update checklist item"));
+    }
   }
   return (
     <div className="rounded-md border border-slate-200 p-3">
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
           <p className="font-medium">{item.item_name} {item.required && <span className="text-red-600">*</span>}</p>
-          <p className="text-sm text-slate-500">{item.assignee_role ?? "Unassigned role"} · Due {item.due_date ?? item.due_offset_days ?? "not set"}</p>
+          <p className="text-sm text-slate-500">{item.assignee?.full_name ?? item.assignee_role ?? "Unassigned"} · Due {item.due_date ?? item.due_offset_days ?? "not set"}</p>
           {item.depends_on && <p className="text-xs text-amber-700">Depends on another checklist item.</p>}
           {item.completion?.file_names?.length ? <p className="mt-1 text-xs text-slate-500">Files: {item.completion.file_names.join(", ")}</p> : null}
+          {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
         </div>
         <div className="flex flex-wrap gap-2">
           <StatusPill>{status}</StatusPill>
-          <Input type="file" onChange={upload} className="max-w-52" />
-          <Button variant="secondary" onClick={() => setStatus("submitted")}>Submit</Button>
-          <Button variant="secondary" onClick={() => setStatus("approved")}>Approve</Button>
-          <Button variant="secondary" onClick={() => setStatus("rejected")}>Reject</Button>
-          <Button variant="danger" onClick={async () => { await archiveChecklistItem(item.id); await reload(); }}>Archive</Button>
+          {canEdit && (
+            <>
+              <Input type="file" onChange={upload} className="max-w-52" />
+              <Button variant="secondary" onClick={() => setStatus("submitted")}>Submit</Button>
+              <Button variant="secondary" onClick={() => setStatus("approved")}>Approve</Button>
+              <Button variant="secondary" onClick={() => setStatus("rejected")}>Reject</Button>
+              <Button variant="danger" onClick={async () => { await archiveChecklistItem(item.id); await reload(); }}>Archive</Button>
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function AssetsTab({ project, assets, reload }: { project: ProjectWithArtist; assets: Array<{ name: string; created_at?: string }>; reload: () => Promise<void> }) {
+function AssetsTab({ project, assets, reload, canUpload }: { project: ProjectWithArtist; assets: Array<{ name: string; created_at?: string }>; reload: () => Promise<void>; canUpload: boolean }) {
+  const [error, setError] = useState("");
   async function upload(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
-    await Promise.all(files.map((file) => uploadProjectAsset(project, file)));
-    await reload();
+    setError("");
+    try {
+      await Promise.all(files.map((file) => uploadProjectAsset(project, file)));
+      await reload();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not upload project assets"));
+    }
   }
   return (
     <Panel>
-      <Field label="Bulk Upload"><Input type="file" multiple onChange={upload} /></Field>
+      {canUpload ? <Field label="Bulk Upload"><Input type="file" multiple onChange={upload} /></Field> : <p className="text-sm text-slate-500">Finance can view assets but cannot upload new files.</p>}
+      {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
       <div className="mt-4 grid gap-2">
         {assets.map((asset) => <AssetLink key={asset.name} project={project} name={asset.name} />)}
         {assets.length === 0 && <EmptyState>No project assets uploaded.</EmptyState>}
@@ -183,12 +222,22 @@ function AssetLink({ project, name }: { project: ProjectWithArtist; name: string
 }
 
 function FinanceTab({ project, finance, transactions, reload }: { project: ProjectWithArtist; finance: { income: number; expense: number; net: number }; transactions: TransactionWithJoins[]; reload: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await createTransaction({ artist_id: project.artist_id, project_id: project.id, type: String(form.get("type")), amount: Number(form.get("amount")), category: String(form.get("category")), date: String(form.get("date")), description: String(form.get("description")) });
-    await reload();
-    event.currentTarget.reset();
+    setSaving(true);
+    setError("");
+    try {
+      await createTransaction({ artist_id: project.artist_id, project_id: project.id, type: String(form.get("type")), amount: Number(form.get("amount")), category: String(form.get("category")), date: String(form.get("date")), description: String(form.get("description")) });
+      await reload();
+      event.currentTarget.reset();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not add transaction"));
+    } finally {
+      setSaving(false);
+    }
   }
   return (
     <Panel>
@@ -204,7 +253,8 @@ function FinanceTab({ project, finance, transactions, reload }: { project: Proje
         <Field label="Amount"><Input name="amount" type="number" required /></Field>
         <Field label="Date"><Input name="date" type="date" required /></Field>
         <Field label="Description"><Input name="description" /></Field>
-        <div className="md:col-span-5"><Button>Add Transaction</Button></div>
+        {error && <p className="text-sm text-red-700 md:col-span-5">{error}</p>}
+        <div className="md:col-span-5"><Button disabled={saving}>{saving ? "Saving..." : "Add Transaction"}</Button></div>
       </form>
       <div className="mt-4 grid gap-2">{transactions.map((tx) => <div key={tx.id} className="rounded-md border p-3 text-sm">{tx.date} · {tx.type} · {tx.category} · {formatCurrency(tx.amount)}</div>)}</div>
     </Panel>

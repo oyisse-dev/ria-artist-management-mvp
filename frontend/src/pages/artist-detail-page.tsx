@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, Textarea } from "../components/ui";
-import { createContract, createTransaction, getArtist, listContracts, listProjects, listTasks, listTransactions, signedAssetUrl, updateArtist, uploadPrivateFile } from "../lib/api";
+import { createContract, createTransaction, getArtist, getErrorMessage, listContracts, listProjects, listTasks, listTransactions, signedAssetUrl, updateArtist, uploadPrivateFile } from "../lib/api";
 import type { Artist, Contract } from "../lib/database.types";
 import type { ProjectWithArtist, TaskWithJoins, TransactionWithJoins } from "../lib/api";
 
@@ -81,22 +81,29 @@ export function ArtistDetailPage() {
 
 function Details({ artist, onSaved }: { artist: Artist; onSaved: (artist: Artist) => void }) {
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     setSaving(true);
-    const saved = await updateArtist(artist.id, {
-      stage_name: String(form.get("stage_name") || ""),
-      legal_name: String(form.get("legal_name") || ""),
-      contact_email: String(form.get("contact_email") || ""),
-      phone: String(form.get("phone") || ""),
-      bio: String(form.get("bio") || ""),
-      commission_rate: Number(form.get("commission_rate") || 20),
-      contract_start: String(form.get("contract_start") || "") || null,
-      contract_end: String(form.get("contract_end") || "") || null
-    });
-    onSaved(saved);
-    setSaving(false);
+    setError("");
+    try {
+      const saved = await updateArtist(artist.id, {
+        stage_name: String(form.get("stage_name") || ""),
+        legal_name: String(form.get("legal_name") || ""),
+        contact_email: String(form.get("contact_email") || ""),
+        phone: String(form.get("phone") || ""),
+        bio: String(form.get("bio") || ""),
+        commission_rate: Number(form.get("commission_rate") || 20),
+        contract_start: String(form.get("contract_start") || "") || null,
+        contract_end: String(form.get("contract_end") || "") || null
+      });
+      onSaved(saved);
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not save artist"));
+    } finally {
+      setSaving(false);
+    }
   }
   return (
     <Panel>
@@ -109,6 +116,7 @@ function Details({ artist, onSaved }: { artist: Artist; onSaved: (artist: Artist
         <Field label="Contract Start"><Input name="contract_start" type="date" defaultValue={artist.contract_start ?? ""} /></Field>
         <Field label="Contract End"><Input name="contract_end" type="date" defaultValue={artist.contract_end ?? ""} /></Field>
         <Field label="Bio"><Textarea name="bio" defaultValue={artist.bio ?? ""} /></Field>
+        {error && <p className="text-sm text-red-700 md:col-span-2">{error}</p>}
         <div className="md:col-span-2"><Button disabled={saving}>{saving ? "Saving..." : "Save Details"}</Button></div>
       </form>
     </Panel>
@@ -116,15 +124,25 @@ function Details({ artist, onSaved }: { artist: Artist; onSaved: (artist: Artist
 }
 
 function Contracts({ artist, contracts, reload }: { artist: Artist; contracts: Contract[]; reload: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const file = form.get("file");
     if (!(file instanceof File) || !file.name) return;
-    const path = await uploadPrivateFile("contracts", artist.id, file, "contracts");
-    await createContract({ artist_id: artist.id, title: String(form.get("title") || file.name), file_url: path, signed_date: String(form.get("signed_date") || "") || null, expiry_date: String(form.get("expiry_date") || "") || null });
-    await reload();
-    event.currentTarget.reset();
+    setSaving(true);
+    setError("");
+    try {
+      const path = await uploadPrivateFile("contracts", artist.id, file, "contracts");
+      await createContract({ artist_id: artist.id, title: String(form.get("title") || file.name), file_url: path, signed_date: String(form.get("signed_date") || "") || null, expiry_date: String(form.get("expiry_date") || "") || null });
+      await reload();
+      event.currentTarget.reset();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not upload contract"));
+    } finally {
+      setSaving(false);
+    }
   }
   return (
     <Panel>
@@ -133,7 +151,8 @@ function Contracts({ artist, contracts, reload }: { artist: Artist; contracts: C
         <Field label="Signed"><Input name="signed_date" type="date" /></Field>
         <Field label="Expiry"><Input name="expiry_date" type="date" /></Field>
         <Field label="File"><Input name="file" type="file" accept="application/pdf,image/*" required /></Field>
-        <div className="md:col-span-4"><Button>Upload Contract</Button></div>
+        {error && <p className="text-sm text-red-700 md:col-span-4">{error}</p>}
+        <div className="md:col-span-4"><Button disabled={saving}>{saving ? "Uploading..." : "Upload Contract"}</Button></div>
       </form>
       <div className="grid gap-2">
         {contracts.map((contract) => <ContractLink key={contract.id} contract={contract} />)}
@@ -155,12 +174,22 @@ function ContractLink({ contract }: { contract: Contract }) {
 }
 
 function TransactionQuickForm({ artist, reload }: { artist: Artist; reload: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await createTransaction({ artist_id: artist.id, type: String(form.get("type")), category: String(form.get("category")), amount: Number(form.get("amount")), date: String(form.get("date")), description: String(form.get("description")) });
-    await reload();
-    event.currentTarget.reset();
+    setSaving(true);
+    setError("");
+    try {
+      await createTransaction({ artist_id: artist.id, type: String(form.get("type")), category: String(form.get("category")), amount: Number(form.get("amount")), date: String(form.get("date")), description: String(form.get("description")) });
+      await reload();
+      event.currentTarget.reset();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not add transaction"));
+    } finally {
+      setSaving(false);
+    }
   }
   return (
     <form onSubmit={submit} className="grid gap-3 md:grid-cols-5">
@@ -169,7 +198,8 @@ function TransactionQuickForm({ artist, reload }: { artist: Artist; reload: () =
       <Field label="Amount"><Input name="amount" type="number" required /></Field>
       <Field label="Date"><Input name="date" type="date" required /></Field>
       <Field label="Description"><Input name="description" /></Field>
-      <div className="md:col-span-5"><Button>Add Transaction</Button></div>
+      {error && <p className="text-sm text-red-700 md:col-span-5">{error}</p>}
+      <div className="md:col-span-5"><Button disabled={saving}>{saving ? "Saving..." : "Add Transaction"}</Button></div>
     </form>
   );
 }

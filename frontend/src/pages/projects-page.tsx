@@ -1,11 +1,13 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, Panel, Select, StatusPill, Textarea, formatCurrency } from "../components/ui";
-import { createProject, listArtists, listProjects } from "../lib/api";
+import { createProject, getErrorMessage, listArtists, listProjects } from "../lib/api";
+import { useAuthStore } from "../context/auth-store";
 import type { ProjectWithArtist } from "../lib/api";
 import type { Artist } from "../lib/database.types";
 
 export function ProjectsPage() {
+  const { role } = useAuthStore();
   const [projects, setProjects] = useState<ProjectWithArtist[]>([]);
   const [artists, setArtists] = useState<Artist[]>([]);
   const [loading, setLoading] = useState(true);
@@ -34,12 +36,14 @@ export function ProjectsPage() {
 
   const filtered = useMemo(() => projects.filter((project) => (!status || project.status === status) && (!type || project.type === type) && (!artistId || project.artist_id === artistId)), [projects, status, type, artistId]);
 
+  const canCreate = role === "admin" || role === "manager";
+
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
 
   return (
     <section>
-      <PageHeader title="Projects" eyebrow="Releases, tours, campaigns" actions={<Button onClick={() => setOpen(!open)}>Create Project</Button>} />
+      <PageHeader title="Projects" eyebrow="Releases, tours, campaigns" actions={canCreate ? <Button onClick={() => setOpen(!open)}>Create Project</Button> : undefined} />
       {open && <ProjectForm artists={artists} onCreated={async () => { setOpen(false); await load(); }} />}
       <Panel className="mb-5">
         <div className="grid gap-3 md:grid-cols-4">
@@ -76,20 +80,27 @@ export function ProjectsPage() {
 
 function ProjectForm({ artists, onCreated }: { artists: Artist[]; onCreated: () => Promise<void> }) {
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     setSaving(true);
-    await createProject({
-      artist_id: String(form.get("artist_id")),
-      title: String(form.get("title")),
-      type: String(form.get("type")),
-      target_date: String(form.get("target_date") || "") || null,
-      budget_estimate: Number(form.get("budget_estimate") || 0),
-      description: String(form.get("description") || "")
-    });
-    await onCreated();
-    setSaving(false);
+    setError("");
+    try {
+      await createProject({
+        artist_id: String(form.get("artist_id")),
+        title: String(form.get("title")),
+        type: String(form.get("type")),
+        target_date: String(form.get("target_date") || "") || null,
+        budget_estimate: Number(form.get("budget_estimate") || 0),
+        description: String(form.get("description") || "")
+      });
+      await onCreated();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not create project"));
+    } finally {
+      setSaving(false);
+    }
   }
   return (
     <Panel className="mb-5">
@@ -100,6 +111,7 @@ function ProjectForm({ artists, onCreated }: { artists: Artist[]; onCreated: () 
         <Field label="Target Date"><Input name="target_date" type="date" /></Field>
         <Field label="Budget Estimate"><Input name="budget_estimate" type="number" /></Field>
         <Field label="Description"><Textarea name="description" /></Field>
+        {error && <p className="text-sm text-red-700 md:col-span-3">{error}</p>}
         <div className="md:col-span-3"><Button disabled={saving}>{saving ? "Creating..." : "Create Project"}</Button></div>
       </form>
     </Panel>

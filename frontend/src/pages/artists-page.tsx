@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { Button, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, Panel } from "../components/ui";
-import { createArtist, listArtists } from "../lib/api";
+import { createArtist, getErrorMessage, listArtists } from "../lib/api";
 import type { Artist } from "../lib/database.types";
 
 export function ArtistsPage() {
@@ -12,7 +12,8 @@ export function ArtistsPage() {
 
   async function load() {
     setLoading(true);
-    listArtists().then(setArtists).catch((err) => setError(err.message)).finally(() => setLoading(false));
+    setError("");
+    listArtists().then(setArtists).catch((err) => setError(getErrorMessage(err, "Artists failed to load"))).finally(() => setLoading(false));
   }
 
   useEffect(() => {
@@ -76,7 +77,7 @@ function ArtistForm({ onCreated }: { onCreated: (artist: Artist) => void }) {
       });
       onCreated(artist);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Could not create artist");
+      setError(getErrorMessage(err, "Could not create artist"));
     } finally {
       setSaving(false);
     }

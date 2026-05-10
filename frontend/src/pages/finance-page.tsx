@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, Select } from "../components/ui";
-import { createTransaction, listArtists, listProjects, listTransactions } from "../lib/api";
+import { createTransaction, getErrorMessage, listArtists, listProjects, listTransactions } from "../lib/api";
 import type { ProjectWithArtist, TransactionWithJoins } from "../lib/api";
 import type { Artist } from "../lib/database.types";
 
@@ -55,12 +55,22 @@ export function FinancePage() {
 }
 
 function FinanceForm({ artists, projects, reload }: { artists: Artist[]; projects: ProjectWithArtist[]; reload: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await createTransaction({ artist_id: String(form.get("artist_id")), project_id: String(form.get("project_id") || "") || null, type: String(form.get("type")), category: String(form.get("category")), amount: Number(form.get("amount")), date: String(form.get("date")), description: String(form.get("description")) });
-    event.currentTarget.reset();
-    await reload();
+    setSaving(true);
+    setError("");
+    try {
+      await createTransaction({ artist_id: String(form.get("artist_id")), project_id: String(form.get("project_id") || "") || null, type: String(form.get("type")), category: String(form.get("category")), amount: Number(form.get("amount")), date: String(form.get("date")), description: String(form.get("description")) });
+      event.currentTarget.reset();
+      await reload();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not add transaction"));
+    } finally {
+      setSaving(false);
+    }
   }
   return (
     <form onSubmit={submit} className="grid gap-3 md:grid-cols-6">
@@ -71,7 +81,8 @@ function FinanceForm({ artists, projects, reload }: { artists: Artist[]; project
       <Field label="Amount"><Input name="amount" type="number" required /></Field>
       <Field label="Date"><Input name="date" type="date" required /></Field>
       <div className="md:col-span-5"><Input name="description" placeholder="Description" className="w-full" /></div>
-      <Button>Add Transaction</Button>
+      {error && <p className="text-sm text-red-700 md:col-span-6">{error}</p>}
+      <Button disabled={saving}>{saving ? "Saving..." : "Add Transaction"}</Button>
     </form>
   );
 }

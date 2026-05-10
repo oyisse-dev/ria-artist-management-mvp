@@ -65,6 +65,15 @@ export function ErrorState({ message }: { message: string }) {
   return <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{message}</div>;
 }
 
+export function PermissionDenied() {
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-5 text-sm text-amber-900">
+      <p className="font-semibold">Permission denied</p>
+      <p className="mt-1">Your current role cannot access this workspace area.</p>
+    </div>
+  );
+}
+
 export function LoadingState() {
   return <div className="rounded-lg border border-slate-200 bg-white p-4 text-sm text-slate-500">Loading...</div>;
 }

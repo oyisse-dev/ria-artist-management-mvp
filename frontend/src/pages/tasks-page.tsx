@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Button, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, Panel, Select, StatusPill, Textarea } from "../components/ui";
-import { createTask, listArtists, listProjects, listTasks, listUsers, updateTask } from "../lib/api";
+import { createTask, getErrorMessage, listArtists, listProjects, listTasks, listUsers, updateTask } from "../lib/api";
 import type { ProjectWithArtist, TaskWithJoins } from "../lib/api";
 import type { Artist, UserProfile } from "../lib/database.types";
 
@@ -61,19 +61,29 @@ export function TasksPage() {
 }
 
 function TaskForm({ artists, projects, users, reload }: { artists: Artist[]; projects: ProjectWithArtist[]; users: UserProfile[]; reload: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    await createTask({
-      title: String(form.get("title")),
-      description: String(form.get("description") || ""),
-      due_date: String(form.get("due_date") || "") || null,
-      assigned_to: String(form.get("assigned_to") || "") || null,
-      artist_id: String(form.get("artist_id") || "") || null,
-      project_id: String(form.get("project_id") || "") || null
-    });
-    event.currentTarget.reset();
-    await reload();
+    setSaving(true);
+    setError("");
+    try {
+      await createTask({
+        title: String(form.get("title")),
+        description: String(form.get("description") || ""),
+        due_date: String(form.get("due_date") || "") || null,
+        assigned_to: String(form.get("assigned_to") || "") || null,
+        artist_id: String(form.get("artist_id") || "") || null,
+        project_id: String(form.get("project_id") || "") || null
+      });
+      event.currentTarget.reset();
+      await reload();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not create task"));
+    } finally {
+      setSaving(false);
+    }
   }
   return (
     <form onSubmit={submit} className="grid gap-3 md:grid-cols-4">
@@ -83,7 +93,8 @@ function TaskForm({ artists, projects, users, reload }: { artists: Artist[]; pro
       <Field label="Artist"><Select name="artist_id"><option value="">General</option>{artists.map((artist) => <option key={artist.id} value={artist.id}>{artist.stage_name}</option>)}</Select></Field>
       <Field label="Project"><Select name="project_id"><option value="">None</option>{projects.map((project) => <option key={project.id} value={project.id}>{project.title}</option>)}</Select></Field>
       <Field label="Description"><Textarea name="description" /></Field>
-      <div className="flex items-end md:col-span-2"><Button>Create Task</Button></div>
+      {error && <p className="text-sm text-red-700 md:col-span-4">{error}</p>}
+      <div className="flex items-end md:col-span-2"><Button disabled={saving}>{saving ? "Saving..." : "Create Task"}</Button></div>
     </form>
   );
 }

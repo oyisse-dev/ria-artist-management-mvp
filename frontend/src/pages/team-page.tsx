@@ -1,13 +1,15 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Button, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, Panel, Select } from "../components/ui";
-import { inviteUser, listUsers } from "../lib/api";
+import { getErrorMessage, inviteUser, listUsers } from "../lib/api";
 import type { UserProfile } from "../lib/database.types";
 
 export function TeamPage() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [formError, setFormError] = useState("");
   const [message, setMessage] = useState("");
+  const [saving, setSaving] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -19,10 +21,18 @@ export function TeamPage() {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     setMessage("");
-    await inviteUser({ email: String(form.get("email")), fullName: String(form.get("fullName")), role: String(form.get("role")) });
-    setMessage("Invite sent.");
-    event.currentTarget.reset();
-    await load();
+    setFormError("");
+    setSaving(true);
+    try {
+      await inviteUser({ email: String(form.get("email")), fullName: String(form.get("fullName")), role: String(form.get("role")) });
+      setMessage("Invite sent.");
+      event.currentTarget.reset();
+      await load();
+    } catch (err) {
+      setFormError(getErrorMessage(err, "Could not send invite"));
+    } finally {
+      setSaving(false);
+    }
   }
 
   if (loading) return <LoadingState />;
@@ -35,9 +45,10 @@ export function TeamPage() {
           <Field label="Full Name"><Input name="fullName" /></Field>
           <Field label="Email"><Input name="email" type="email" required /></Field>
           <Field label="Role"><Select name="role"><option value="manager">Manager</option><option value="finance">Finance</option><option value="admin">Admin</option></Select></Field>
-          <div className="flex items-end"><Button>Invite User</Button></div>
+          <div className="flex items-end"><Button disabled={saving}>{saving ? "Sending..." : "Invite User"}</Button></div>
         </form>
         {message && <p className="mt-3 text-sm text-teal-700">{message}</p>}
+        {formError && <p className="mt-3 text-sm text-red-700">{formError}</p>}
       </Panel>
       <Panel>
         <div className="grid gap-2">

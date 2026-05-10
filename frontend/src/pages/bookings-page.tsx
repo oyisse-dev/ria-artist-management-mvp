@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, Select, StatusPill, Textarea } from "../components/ui";
-import { createBooking, listArtists, listBookings, listProjects, updateBooking } from "../lib/api";
+import { createBooking, getErrorMessage, listArtists, listBookings, listProjects, updateBooking } from "../lib/api";
 import type { BookingWithJoins, ProjectWithArtist } from "../lib/api";
 import type { Artist } from "../lib/database.types";
 
@@ -54,27 +54,37 @@ export function BookingsPage() {
 }
 
 function BookingForm({ artists, projects, reload }: { artists: Artist[]; projects: ProjectWithArtist[]; reload: () => Promise<void> }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const riderText = String(form.get("rider") || "{}");
     let rider: Record<string, unknown> = {};
     try { rider = JSON.parse(riderText); } catch { rider = { notes: riderText }; }
-    await createBooking({
-      artist_id: String(form.get("artist_id")),
-      project_id: String(form.get("project_id") || "") || null,
-      event_name: String(form.get("event_name")),
-      venue: String(form.get("venue") || ""),
-      date: String(form.get("date")),
-      fee: Number(form.get("fee") || 0),
-      deposit: Number(form.get("deposit") || 0),
-      promoter_name: String(form.get("promoter_name") || ""),
-      promoter_contact: String(form.get("promoter_contact") || ""),
-      rider: rider as unknown as import("../lib/database.types").Json,
-      notes: String(form.get("notes") || "")
-    });
-    event.currentTarget.reset();
-    await reload();
+    setSaving(true);
+    setError("");
+    try {
+      await createBooking({
+        artist_id: String(form.get("artist_id")),
+        project_id: String(form.get("project_id") || "") || null,
+        event_name: String(form.get("event_name")),
+        venue: String(form.get("venue") || ""),
+        date: String(form.get("date")),
+        fee: Number(form.get("fee") || 0),
+        deposit: Number(form.get("deposit") || 0),
+        promoter_name: String(form.get("promoter_name") || ""),
+        promoter_contact: String(form.get("promoter_contact") || ""),
+        rider: rider as unknown as import("../lib/database.types").Json,
+        notes: String(form.get("notes") || "")
+      });
+      event.currentTarget.reset();
+      await reload();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not create booking"));
+    } finally {
+      setSaving(false);
+    }
   }
   return (
     <form onSubmit={submit} className="grid gap-3 md:grid-cols-4">
@@ -89,7 +99,8 @@ function BookingForm({ artists, projects, reload }: { artists: Artist[]; project
       <Field label="Promoter Contact"><Input name="promoter_contact" /></Field>
       <Field label="Rider JSON"><Textarea name="rider" defaultValue={'{"technical":"","hospitality":""}'} /></Field>
       <Field label="Notes"><Textarea name="notes" /></Field>
-      <div className="flex items-end"><Button>Create Booking</Button></div>
+      {error && <p className="text-sm text-red-700 md:col-span-4">{error}</p>}
+      <div className="flex items-end"><Button disabled={saving}>{saving ? "Saving..." : "Create Booking"}</Button></div>
     </form>
   );
 }

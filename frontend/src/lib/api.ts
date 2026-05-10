@@ -19,15 +19,19 @@ export type TaskWithJoins = Task & { artist?: Pick<Artist, "id" | "stage_name"> 
 export type TransactionWithJoins = Transaction & { artist?: Pick<Artist, "id" | "stage_name" | "commission_rate"> | null; project?: Pick<Project, "id" | "title"> | null };
 export type BookingWithJoins = Booking & { artist?: Pick<Artist, "id" | "stage_name"> | null; project?: Pick<Project, "id" | "title"> | null };
 
-function throwIf(error: unknown) {
-  if (!error) return;
-  if (error instanceof Error) throw error;
+export function getErrorMessage(error: unknown, fallback = "Request failed") {
+  if (error instanceof Error) return error.message;
   if (typeof error === "object" && error !== null) {
     const details = error as { message?: string; details?: string; hint?: string; code?: string };
     const parts = [details.message, details.details, details.hint, details.code].filter(Boolean);
-    throw new Error(parts.join(" ") || "Supabase request failed");
+    return parts.join(" ") || fallback;
   }
-  throw new Error(String(error));
+  return typeof error === "string" ? error : fallback;
+}
+
+function throwIf(error: unknown) {
+  if (!error) return;
+  throw new Error(getErrorMessage(error, "Supabase request failed"));
 }
 
 export async function getCurrentProfile() {

@@ -2,6 +2,7 @@ import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
 import { AppLayout } from "./components/layout";
+import { RequireRole } from "./components/require-role";
 import { useAuthStore } from "./context/auth-store";
 import { LoginPage } from "./pages/login-page";
 import { DashboardPage } from "./pages/dashboard-page";
@@ -23,15 +24,15 @@ const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { index: true, element: <DashboardPage /> },
-      { path: "artists", element: <ArtistsPage /> },
-      { path: "artists/:id", element: <ArtistDetailPage /> },
-      { path: "projects", element: <ProjectsPage /> },
-      { path: "projects/:id", element: <ProjectDetailPage /> },
-      { path: "tasks", element: <TasksPage /> },
-      { path: "finance", element: <FinancePage /> },
-      { path: "bookings", element: <BookingsPage /> },
-      { path: "calendar", element: <CalendarPage /> },
-      { path: "team", element: <TeamPage /> }
+      { path: "artists", element: <RequireRole roles={["admin", "manager"]}><ArtistsPage /></RequireRole> },
+      { path: "artists/:id", element: <RequireRole roles={["admin", "manager"]}><ArtistDetailPage /></RequireRole> },
+      { path: "projects", element: <RequireRole roles={["admin", "manager", "finance"]}><ProjectsPage /></RequireRole> },
+      { path: "projects/:id", element: <RequireRole roles={["admin", "manager", "finance"]}><ProjectDetailPage /></RequireRole> },
+      { path: "tasks", element: <RequireRole roles={["admin", "manager"]}><TasksPage /></RequireRole> },
+      { path: "finance", element: <RequireRole roles={["admin", "manager", "finance"]}><FinancePage /></RequireRole> },
+      { path: "bookings", element: <RequireRole roles={["admin", "manager"]}><BookingsPage /></RequireRole> },
+      { path: "calendar", element: <RequireRole roles={["admin", "manager", "finance"]}><CalendarPage /></RequireRole> },
+      { path: "team", element: <RequireRole roles={["admin"]}><TeamPage /></RequireRole> }
     ]
   }
 ]);
