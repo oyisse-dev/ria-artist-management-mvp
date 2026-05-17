@@ -72,6 +72,7 @@ Deno.serve(async (req) => {
       email,
       full_name: fullName || email,
       role: safeRole,
+      is_active: true,
     });
 
     return new Response(JSON.stringify({ success: true, email }), {

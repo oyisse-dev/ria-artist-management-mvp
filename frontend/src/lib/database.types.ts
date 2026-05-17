@@ -8,6 +8,15 @@ export interface UserProfile {
   full_name: string | null;
   role: Role | null;
   created_at: string | null;
+  is_active?: boolean;
+  updated_at: string | null;
+}
+
+export interface ArtistAssignment {
+  id?: string;
+  artist_id: string;
+  user_id: string;
+  assigned_at: string | null;
 }
 
 export interface Artist {
@@ -172,6 +181,7 @@ export type Database = {
   public: {
     Tables: {
       users: { Row: UserProfile; Insert: Partial<UserProfile> & { id: string }; Update: Partial<UserProfile> };
+      artist_assignments: { Row: ArtistAssignment; Insert: Partial<ArtistAssignment> & { artist_id: string; user_id: string }; Update: Partial<ArtistAssignment> };
       artists: { Row: Artist; Insert: Partial<Artist>; Update: Partial<Artist> };
       projects: { Row: Project; Insert: Partial<Project> & { artist_id: string; title: string; type: string }; Update: Partial<Project> };
       project_checklists: { Row: ProjectChecklist; Insert: Partial<ProjectChecklist> & { project_id: string; item_name: string }; Update: Partial<ProjectChecklist> };

@@ -5,6 +5,7 @@ import type {
   Booking,
   ChecklistCompletion,
   Contract,
+  ArtistAssignment,
   NotificationItem,
   Project,
   ProjectChecklist,
@@ -18,6 +19,7 @@ export type ChecklistWithCompletion = ProjectChecklist & { completion?: Checklis
 export type TaskWithJoins = Task & { artist?: Pick<Artist, "id" | "stage_name"> | null; assignee?: Pick<UserProfile, "id" | "full_name"> | null; project?: Pick<Project, "id" | "title"> | null };
 export type TransactionWithJoins = Transaction & { artist?: Pick<Artist, "id" | "stage_name" | "commission_rate"> | null; project?: Pick<Project, "id" | "title"> | null };
 export type BookingWithJoins = Booking & { artist?: Pick<Artist, "id" | "stage_name"> | null; project?: Pick<Project, "id" | "title"> | null };
+export type ArtistAssignmentWithJoins = ArtistAssignment & { artist?: Pick<Artist, "id" | "stage_name"> | null; user?: Pick<UserProfile, "id" | "full_name" | "email" | "role" | "is_active"> | null };
 
 export function getErrorMessage(error: unknown, fallback = "Request failed") {
   if (error instanceof Error) return error.message;
@@ -46,6 +48,36 @@ export async function listUsers() {
   const { data, error } = await supabase.from("users").select("*").order("full_name");
   throwIf(error);
   return data ?? [];
+}
+
+export async function updateUserProfile(id: string, payload: Partial<Pick<UserProfile, "full_name" | "role" | "is_active">>) {
+  const { data, error } = await supabase.from("users").update(payload).eq("id", id).select().single();
+  throwIf(error);
+  return data;
+}
+
+export async function listArtistAssignments() {
+  const { data, error } = await supabase
+    .from("artist_assignments")
+    .select("*, artist:artists(id,stage_name), user:users(id,full_name,email,role)")
+    .order("assigned_at", { ascending: false });
+  throwIf(error);
+  return (data ?? []) as ArtistAssignmentWithJoins[];
+}
+
+export async function assignArtistToUser(artistId: string, userId: string) {
+  const { data, error } = await supabase
+    .from("artist_assignments")
+    .upsert({ artist_id: artistId, user_id: userId }, { onConflict: "artist_id,user_id" })
+    .select()
+    .single();
+  throwIf(error);
+  return data;
+}
+
+export async function removeArtistAssignment(artistId: string, userId: string) {
+  const { error } = await supabase.from("artist_assignments").delete().eq("artist_id", artistId).eq("user_id", userId);
+  throwIf(error);
 }
 
 export async function inviteUser(payload: { email: string; role: string; fullName: string }) {
