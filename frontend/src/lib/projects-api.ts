@@ -64,6 +64,7 @@ export type ChecklistItem = {
   has_deliverable?: boolean;
   deliverable_type?: string;
   deliverable_custom?: string | null;
+  priority?: "low" | "medium" | "high" | "urgent";
   archived_at?: string | null;
   archived_by?: string | null;
   // joined completion
@@ -165,19 +166,52 @@ export async function deleteProject(id: string) {
 
 // ---- Checklists ----
 export async function fetchProjectChecklist(projectId: string, opts?: { includeArchived?: boolean }) {
-  let q = supabase
-    .from("project_checklists")
-    .select("*, checklist_completions(*), users(full_name)")
-    .eq("project_id", projectId)
-    .order("position");
+  const applyArchivedFilter = <T extends { is: (col: string, val: null) => T }>(query: T) => {
+    if (!opts?.includeArchived) return query.is("archived_at", null);
+    return query;
+  };
 
-  if (!opts?.includeArchived) {
-    q = q.is("archived_at", null);
+  // Attempt 1: full query with joins
+  {
+    const q = applyArchivedFilter(
+      supabase
+        .from("project_checklists")
+        .select("*, checklist_completions(*), users(full_name)")
+        .eq("project_id", projectId)
+        .order("position")
+    );
+    const { data, error } = await q;
+    if (!error) return (data ?? []) as ChecklistItem[];
+    console.warn("fetchProjectChecklist: full query failed, falling back:", error.message);
   }
 
-  const { data, error } = await q;
-  if (error) throw error;
-  return (data ?? []) as ChecklistItem[];
+  // Attempt 2: remove users join (common RLS/relationship failure point)
+  {
+    const q = applyArchivedFilter(
+      supabase
+        .from("project_checklists")
+        .select("*, checklist_completions(*)")
+        .eq("project_id", projectId)
+        .order("position")
+    );
+    const { data, error } = await q;
+    if (!error) return (data ?? []) as ChecklistItem[];
+    console.warn("fetchProjectChecklist: completion join query failed, falling back:", error.message);
+  }
+
+  // Attempt 3: base checklist only (keeps page functional)
+  {
+    const q = applyArchivedFilter(
+      supabase
+        .from("project_checklists")
+        .select("*")
+        .eq("project_id", projectId)
+        .order("position")
+    );
+    const { data, error } = await q;
+    if (error) throw error;
+    return ((data ?? []) as ChecklistItem[]).map((row) => ({ ...row, checklist_completions: [] }));
+  }
 }
 
 export async function createChecklistItem(body: Partial<ChecklistItem> & { project_id: string; item_name: string; position?: number }) {
@@ -204,12 +238,28 @@ export async function createChecklistItem(body: Partial<ChecklistItem> & { proje
 }
 
 export async function updateChecklistItem(id: string, updates: Partial<ChecklistItem>) {
-  const { data, error } = await supabase
-    .from("project_checklists")
-    .update(updates)
-    .eq("id", id)
-    .select()
-    .single();
+  const attempt = async (payload: Partial<ChecklistItem>) => {
+    return await supabase
+      .from("project_checklists")
+      .update(payload)
+      .eq("id", id)
+      .select()
+      .single();
+  };
+
+  let { data, error } = await attempt(updates);
+
+  // Backward-compatible fallback for environments where new columns are not migrated yet.
+  if (error && "priority" in updates) {
+    const msg = String((error as any)?.message ?? "").toLowerCase();
+    const details = String((error as any)?.details ?? "").toLowerCase();
+    const hint = String((error as any)?.hint ?? "").toLowerCase();
+    if (msg.includes("priority") || details.includes("priority") || hint.includes("priority")) {
+      const { priority, ...withoutPriority } = updates as any;
+      ({ data, error } = await attempt(withoutPriority));
+    }
+  }
+
   if (error) throw error;
   return data;
 }

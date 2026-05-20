@@ -35,10 +35,23 @@ export function ArtistsPage() {
 
   const load = () => {
     setLoading(true);
+    setError(null);
+    const timeout = setTimeout(() => {
+      setError("Request is taking too long. Please refresh if this persists.");
+      setLoading(false);
+    }, 20000);
+
     fetchArtists()
-      .then((data) => setArtists(data as Artist[]))
-      .catch(() => setError("Failed to load artists"))
-      .finally(() => setLoading(false));
+      .then((data) => {
+        setArtists(data as Artist[]);
+      })
+      .catch((e) => {
+        setError(e instanceof Error ? e.message : "Failed to load artists");
+      })
+      .finally(() => {
+        clearTimeout(timeout);
+        setLoading(false);
+      });
   };
 
   useEffect(() => { load(); }, []);

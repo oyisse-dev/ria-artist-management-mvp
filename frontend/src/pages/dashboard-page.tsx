@@ -1,8 +1,10 @@
+import { Link } from "react-router-dom";
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
 
 type DashData = {
   pendingTasks: number;
+  overdueTasks: number;
   totalArtists: number;
   totalIncome: number;
   totalExpense: number;
@@ -18,9 +20,20 @@ export function DashboardPage() {
   useEffect(() => {
     async function load() {
       try {
-        const [{ count: totalArtists }, { count: pendingTasks }, { data: txData }] = await Promise.all([
+        const today = new Date().toISOString().slice(0, 10);
+        const [
+          { count: totalArtists },
+          { count: pendingTasks },
+          { count: overdueTasks },
+          { data: txData },
+        ] = await Promise.all([
           supabase.from("artists").select("*", { count: "exact", head: true }),
           supabase.from("tasks").select("*", { count: "exact", head: true }).eq("completed", false),
+          supabase
+            .from("tasks")
+            .select("*", { count: "exact", head: true })
+            .eq("completed", false)
+            .lt("due_date", today),
           supabase.from("transactions").select("*").order("date", { ascending: false }).limit(50),
         ]);
         const txs = txData ?? [];
@@ -28,6 +41,7 @@ export function DashboardPage() {
         const totalExpense = txs.filter((t) => t.type === "expense").reduce((s, t) => s + Number(t.amount), 0);
         setData({
           pendingTasks: pendingTasks ?? 0,
+          overdueTasks: overdueTasks ?? 0,
           totalArtists: totalArtists ?? 0,
           totalIncome,
           totalExpense,
@@ -49,13 +63,32 @@ export function DashboardPage() {
 
   return (
     <section className="space-y-6">
-      <h2 className="text-xl font-semibold">Dashboard</h2>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-semibold">Dashboard</h2>
+          <p className="text-sm text-slate-500">Your daily operations snapshot</p>
+        </div>
+        <div className="flex gap-2">
+          <Link
+            to="/artists"
+            className="rounded-lg border bg-white px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+          >
+            Manage artists
+          </Link>
+          <Link
+            to="/tasks"
+            className="rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700"
+          >
+            Review tasks
+          </Link>
+        </div>
+      </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Total Artists" value={String(data.totalArtists)} color="blue" />
-        <StatCard label="Pending Tasks" value={String(data.pendingTasks)} color="amber" />
-        <StatCard label="Total Income" value={formatUGX(data.totalIncome)} color="green" />
-        <StatCard label="Net" value={formatUGX(data.net)} color={data.net >= 0 ? "green" : "red"} />
+        <StatCard label="Active Artists" value={String(data.totalArtists)} color="blue" />
+        <StatCard label="Open Tasks" value={String(data.pendingTasks)} color="amber" />
+        <StatCard label="Overdue Tasks" value={String(data.overdueTasks)} color={data.overdueTasks > 0 ? "red" : "green"} />
+        <StatCard label="Net Cashflow" value={formatUGX(data.net)} color={data.net >= 0 ? "green" : "red"} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">

@@ -4,12 +4,14 @@ import { supabase } from "../lib/supabase";
 interface FileUploadProps {
   artistId: string;
   onUploaded: (url: string, fileName: string) => void;
+  onUploadedMany?: (files: Array<{ url: string; name: string }>) => void;
   label?: string;
   accept?: string;
   hint?: string;
+  multiple?: boolean;
 }
 
-export function FileUpload({ artistId, onUploaded, label, accept, hint }: FileUploadProps) {
+export function FileUpload({ artistId, onUploaded, onUploadedMany, label, accept, hint, multiple }: FileUploadProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -51,16 +53,37 @@ export function FileUpload({ artistId, onUploaded, label, accept, hint }: FileUp
     }
   };
 
+  const uploadFiles = async (files: File[]) => {
+    if (!files.length) return;
+    const uploaded: Array<{ url: string; name: string }> = [];
+    for (const f of files) {
+      await uploadFile(f);
+      // uploadFile calls onUploaded; for bulk mapping we also capture optimistic placeholders
+      uploaded.push({ url: `artists/${artistId}/contracts/${Date.now()}-${f.name.replace(/[^a-zA-Z0-9._-]/g, "_")}`, name: f.name });
+    }
+    if (onUploadedMany) onUploadedMany(uploaded);
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) uploadFile(file);
+    const files = Array.from(e.target.files ?? []);
+    if (!files.length) return;
+    if (multiple) {
+      uploadFiles(files);
+    } else {
+      uploadFile(files[0]);
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDragOver(false);
-    const file = e.dataTransfer.files?.[0];
-    if (file) uploadFile(file);
+    const files = Array.from(e.dataTransfer.files ?? []);
+    if (!files.length) return;
+    if (multiple) {
+      uploadFiles(files);
+    } else {
+      uploadFile(files[0]);
+    }
   };
 
   return (
@@ -77,6 +100,7 @@ export function FileUpload({ artistId, onUploaded, label, accept, hint }: FileUp
           dragOver ? "border-slate-500 bg-slate-50" : "border-slate-200 hover:border-slate-400 hover:bg-slate-50"
         } ${uploading ? "cursor-not-allowed opacity-60" : ""}`}>
         <input ref={inputRef} type="file" className="hidden"
+          multiple={Boolean(multiple)}
           accept={accept ?? ".pdf,.doc,.docx,.jpg,.jpeg,.png,.csv,.xlsx,.wav,.mp3"}
           onChange={handleFileChange} disabled={uploading} />
         {uploading ? (
