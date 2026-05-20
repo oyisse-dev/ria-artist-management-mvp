@@ -85,16 +85,29 @@ export function TasksPage() {
   const isOverdue = (dueDate?: string) =>
     dueDate && new Date(dueDate) < new Date();
 
+  const openCount = tasks.filter((t) => !t.completed).length;
+  const doneCount = tasks.filter((t) => t.completed).length;
+  const overdueCount = tasks.filter((t) => !t.completed && isOverdue(t.dueDate)).length;
+
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="text-xl font-semibold">Tasks</h2>
+        <div>
+          <h2 className="text-xl font-semibold">Tasks</h2>
+          <p className="text-sm text-slate-500">Track and close artist work faster</p>
+        </div>
         {canWrite && (
           <button onClick={() => setShowModal(true)}
             className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">
             + New Task
           </button>
         )}
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-3">
+        <SummaryCard label="Open" value={openCount} tone="amber" />
+        <SummaryCard label="Completed" value={doneCount} tone="green" />
+        <SummaryCard label="Overdue" value={overdueCount} tone={overdueCount > 0 ? "red" : "slate"} />
       </div>
 
       {/* Filter tabs */}
@@ -160,6 +173,14 @@ export function TasksPage() {
                   )}
                 </div>
               </div>
+              {!task.completed && (
+                <button
+                  onClick={() => handleToggle(task)}
+                  className="rounded-lg border px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
+                >
+                  Mark done
+                </button>
+              )}
             </div>
           ))}
         </div>
@@ -226,5 +247,28 @@ export function TasksPage() {
         </div>
       )}
     </section>
+  );
+}
+
+function SummaryCard({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "amber" | "green" | "red" | "slate";
+}) {
+  const tones: Record<typeof tone, string> = {
+    amber: "bg-amber-50 text-amber-700",
+    green: "bg-green-50 text-green-700",
+    red: "bg-red-50 text-red-700",
+    slate: "bg-slate-100 text-slate-700",
+  };
+  return (
+    <div className="rounded-xl border bg-white p-4">
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+      <p className={`mt-2 inline-block rounded-lg px-2 py-1 text-2xl font-bold ${tones[tone]}`}>{value}</p>
+    </div>
   );
 }
