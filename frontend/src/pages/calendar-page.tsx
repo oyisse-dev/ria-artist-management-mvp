@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { EmptyState, ErrorState, LoadingState, PageHeader, Panel, StatusPill } from "../components/ui";
+import { EmptyState, ErrorState, LoadingState, PageHeader, Panel, StatusPill, StatCard } from "../components/ui";
 import { listBookings, listProjectChecklist, listProjects, listTasks } from "../lib/api";
 
 interface CalendarItem {
@@ -45,6 +45,12 @@ export function CalendarPage() {
     limit.setDate(now.getDate() + days);
     return items.filter((item) => new Date(item.date) >= new Date(now.toDateString()) && new Date(item.date) <= limit);
   }, [items, mode]);
+  const upcomingWeek = useMemo(() => {
+    const now = new Date();
+    const limit = new Date(now);
+    limit.setDate(now.getDate() + 7);
+    return items.filter((item) => new Date(item.date) >= now && new Date(item.date) <= limit).length;
+  }, [items]);
 
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
@@ -52,6 +58,11 @@ export function CalendarPage() {
   return (
     <section>
       <PageHeader title="Calendar" eyebrow="Deadlines and bookings" actions={<div className="flex gap-2">{["month","week","list"].map((item) => <button key={item} className={`rounded-md px-3 py-2 text-sm capitalize ${mode === item ? "bg-slate-950 text-white" : "bg-white"}`} onClick={() => setMode(item as typeof mode)}>{item}</button>)}</div>} />
+      <div className="mb-5 grid gap-4 md:grid-cols-3">
+        <StatCard label="Upcoming 7 days" value={upcomingWeek} />
+        <StatCard label="Bookings" value={items.filter((item) => item.type === "booking").length} />
+        <StatCard label="Deadlines" value={items.filter((item) => item.type !== "booking").length} />
+      </div>
       <Panel>
         <div className="grid gap-2">
           {visible.map((item, index) => (

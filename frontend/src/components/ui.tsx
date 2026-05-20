@@ -12,6 +12,15 @@ export function PageHeader({ title, eyebrow, actions }: { title: string; eyebrow
   );
 }
 
+export function StatCard({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <Panel>
+      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
+      <p className="mt-2 text-2xl font-semibold text-slate-950">{value}</p>
+    </Panel>
+  );
+}
+
 export function Button({ children, variant = "primary", ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { variant?: "primary" | "secondary" | "danger" }) {
   const styles = {
     primary: "bg-slate-950 text-white hover:bg-slate-800",
@@ -55,6 +64,30 @@ export function Panel({ children, className = "" }: { children: ReactNode; class
 
 export function StatusPill({ children }: { children: ReactNode }) {
   return <span className="inline-flex rounded-full bg-slate-100 px-2 py-1 text-xs font-medium capitalize text-slate-700">{children}</span>;
+}
+
+export function SectionTabs({
+  tabs,
+  active,
+  onChange
+}: {
+  tabs: string[];
+  active: string;
+  onChange: (tab: string) => void;
+}) {
+  return (
+    <div className="mb-5 flex flex-wrap gap-2">
+      {tabs.map((item) => (
+        <button
+          key={item}
+          className={`rounded-md px-3 py-2 text-sm capitalize ${active === item ? "bg-slate-950 text-white" : "bg-white text-slate-700"}`}
+          onClick={() => onChange(item)}
+        >
+          {item}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 export function EmptyState({ children }: { children: ReactNode }) {

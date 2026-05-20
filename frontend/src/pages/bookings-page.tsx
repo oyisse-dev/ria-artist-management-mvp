@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, Select, StatusPill, Textarea } from "../components/ui";
+import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, Select, StatCard, StatusPill, Textarea } from "../components/ui";
 import { createBooking, getErrorMessage, listArtists, listBookings, listProjects, updateBooking } from "../lib/api";
 import type { BookingWithJoins, ProjectWithArtist } from "../lib/api";
 import type { Artist } from "../lib/database.types";
@@ -27,9 +27,16 @@ export function BookingsPage() {
   useEffect(() => { load(); }, []);
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
+  const activeBookings = bookings.filter((booking) => booking.status !== "completed" && booking.status !== "cancelled");
   return (
     <section>
       <PageHeader title="Bookings" eyebrow="Events and riders" />
+      <div className="mb-5 grid gap-4 md:grid-cols-4">
+        <StatCard label="Total" value={bookings.length} />
+        <StatCard label="Active" value={activeBookings.length} />
+        <StatCard label="Confirmed" value={bookings.filter((booking) => booking.status === "confirmed").length} />
+        <StatCard label="Completed" value={bookings.filter((booking) => booking.status === "completed").length} />
+      </div>
       <Panel className="mb-5"><BookingForm artists={artists} projects={projects} reload={load} /></Panel>
       <div className="grid gap-3">
         {bookings.map((booking) => (
@@ -42,7 +49,18 @@ export function BookingsPage() {
               </div>
               <div className="flex gap-2">
                 <StatusPill>{booking.status}</StatusPill>
-                {["inquiry","confirmed","completed","cancelled"].map((status) => <Button key={status} variant="secondary" onClick={async () => { await updateBooking(booking.id, { status }); await load(); }}>{status}</Button>)}
+                <select
+                  value={booking.status}
+                  className="min-h-10 rounded-md border border-slate-300 bg-white px-3 text-sm outline-none focus:border-teal-600"
+                  onChange={async (event) => {
+                    await updateBooking(booking.id, { status: event.target.value });
+                    await load();
+                  }}
+                >
+                  {["inquiry", "confirmed", "completed", "cancelled"].map((status) => (
+                    <option key={status} value={status}>{status}</option>
+                  ))}
+                </select>
               </div>
             </div>
           </Panel>

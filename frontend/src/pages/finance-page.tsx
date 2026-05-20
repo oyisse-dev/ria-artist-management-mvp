@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, Select } from "../components/ui";
+import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, Select, StatCard } from "../components/ui";
 import { createTransaction, getErrorMessage, listArtists, listProjects, listTransactions } from "../lib/api";
 import type { ProjectWithArtist, TransactionWithJoins } from "../lib/api";
 import type { Artist } from "../lib/database.types";
@@ -10,6 +10,8 @@ export function FinancePage() {
   const [projects, setProjects] = useState<ProjectWithArtist[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [artistFilter, setArtistFilter] = useState("");
 
   async function load() {
     setLoading(true);
@@ -31,24 +33,48 @@ export function FinancePage() {
     const payout = transactions.reduce((sum, tx) => sum + Number(tx.artist_net_amount ?? 0), 0);
     return { income, expense, net: income - expense, payout };
   }, [transactions]);
+  const filteredTransactions = useMemo(
+    () =>
+      transactions.filter(
+        (tx) => (!typeFilter || tx.type === typeFilter) && (!artistFilter || tx.artist_id === artistFilter)
+      ),
+    [transactions, typeFilter, artistFilter]
+  );
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
   return (
     <section>
       <PageHeader title="Finance" eyebrow="Income, expenses, payouts" />
       <div className="mb-5 grid gap-4 md:grid-cols-4">
-        <Panel><p className="text-sm text-slate-500">Income</p><strong>{formatCurrency(totals.income)}</strong></Panel>
-        <Panel><p className="text-sm text-slate-500">Expense</p><strong>{formatCurrency(totals.expense)}</strong></Panel>
-        <Panel><p className="text-sm text-slate-500">Net</p><strong>{formatCurrency(totals.net)}</strong></Panel>
-        <Panel><p className="text-sm text-slate-500">Artist Payout</p><strong>{formatCurrency(totals.payout)}</strong></Panel>
+        <StatCard label="Income" value={formatCurrency(totals.income)} />
+        <StatCard label="Expense" value={formatCurrency(totals.expense)} />
+        <StatCard label="Net" value={formatCurrency(totals.net)} />
+        <StatCard label="Artist Payout" value={formatCurrency(totals.payout)} />
       </div>
+      <Panel className="mb-5">
+        <div className="grid gap-3 md:grid-cols-3">
+          <Field label="Type">
+            <Select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
+              <option value="">All</option>
+              <option value="income">Income</option>
+              <option value="expense">Expense</option>
+            </Select>
+          </Field>
+          <Field label="Artist">
+            <Select value={artistFilter} onChange={(event) => setArtistFilter(event.target.value)}>
+              <option value="">All</option>
+              {artists.map((artist) => <option key={artist.id} value={artist.id}>{artist.stage_name}</option>)}
+            </Select>
+          </Field>
+        </div>
+      </Panel>
       <Panel className="mb-5"><FinanceForm artists={artists} projects={projects} reload={load} /></Panel>
       <div className="overflow-hidden rounded-lg border bg-white">
         <table className="min-w-full text-sm">
           <thead className="bg-slate-100 text-left"><tr><th className="px-4 py-3">Date</th><th>Artist</th><th>Project</th><th>Type</th><th>Category</th><th>Amount</th><th>Payout</th></tr></thead>
-          <tbody>{transactions.map((tx) => <tr key={tx.id} className="border-t"><td className="px-4 py-3">{tx.date}</td><td>{tx.artist?.stage_name}</td><td>{tx.project?.title ?? "-"}</td><td>{tx.type}</td><td>{tx.category}</td><td>{formatCurrency(tx.amount)}</td><td>{formatCurrency(tx.artist_net_amount)}</td></tr>)}</tbody>
+          <tbody>{filteredTransactions.map((tx) => <tr key={tx.id} className="border-t"><td className="px-4 py-3">{tx.date}</td><td>{tx.artist?.stage_name}</td><td>{tx.project?.title ?? "-"}</td><td>{tx.type}</td><td>{tx.category}</td><td>{formatCurrency(tx.amount)}</td><td>{formatCurrency(tx.artist_net_amount)}</td></tr>)}</tbody>
         </table>
-        {transactions.length === 0 && <div className="p-4"><EmptyState>No transactions found.</EmptyState></div>}
+        {filteredTransactions.length === 0 && <div className="p-4"><EmptyState>No transactions found for current filters.</EmptyState></div>}
       </div>
     </section>
   );

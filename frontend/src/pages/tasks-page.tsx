@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
-import { Button, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, Panel, Select, StatusPill, Textarea } from "../components/ui";
+import { Button, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, Panel, SectionTabs, Select, StatCard, StatusPill, Textarea } from "../components/ui";
 import { createTask, getErrorMessage, listArtists, listProjects, listTasks, listUsers, updateTask } from "../lib/api";
 import type { ProjectWithArtist, TaskWithJoins } from "../lib/api";
 import type { Artist, UserProfile } from "../lib/database.types";
@@ -11,6 +11,8 @@ export function TasksPage() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [tab, setTab] = useState("open");
+  const [showCreate, setShowCreate] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -34,12 +36,26 @@ export function TasksPage() {
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
 
+  const openTasks = tasks.filter((task) => !task.completed);
+  const overdueTasks = openTasks.filter((task) => task.due_date && new Date(task.due_date) < new Date());
+  const visibleTasks = tab === "all" ? tasks : tab === "done" ? tasks.filter((task) => task.completed) : openTasks;
+
   return (
     <section>
-      <PageHeader title="Tasks" eyebrow="Assignments" />
-      <Panel className="mb-5"><TaskForm artists={artists} projects={projects} users={users} reload={load} /></Panel>
+      <PageHeader
+        title="Tasks"
+        eyebrow="Assignments"
+        actions={<Button onClick={() => setShowCreate((v) => !v)}>{showCreate ? "Hide form" : "Create task"}</Button>}
+      />
+      <div className="mb-5 grid gap-4 md:grid-cols-3">
+        <StatCard label="Open" value={openTasks.length} />
+        <StatCard label="Completed" value={tasks.filter((task) => task.completed).length} />
+        <StatCard label="Overdue" value={overdueTasks.length} />
+      </div>
+      {showCreate && <Panel className="mb-5"><TaskForm artists={artists} projects={projects} users={users} reload={load} /></Panel>}
+      <SectionTabs tabs={["open", "all", "done"]} active={tab} onChange={setTab} />
       <div className="grid gap-3">
-        {tasks.map((task) => (
+        {visibleTasks.map((task) => (
           <Panel key={task.id}>
             <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
               <div>
@@ -54,7 +70,7 @@ export function TasksPage() {
             </div>
           </Panel>
         ))}
-        {tasks.length === 0 && <EmptyState>No tasks visible.</EmptyState>}
+        {visibleTasks.length === 0 && <EmptyState>No tasks visible in this view.</EmptyState>}
       </div>
     </section>
   );

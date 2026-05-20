@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { archiveChecklistItem, createTransaction, getErrorMessage, getProject, listAuditLogs, listProjectAssets, listProjectChecklist, listTransactions, saveChecklistCompletion, signedAssetUrl, updateProject, uploadProjectAsset } from "../lib/api";
 import type { ChecklistWithCompletion, ProjectWithArtist, TransactionWithJoins } from "../lib/api";
 import type { AuditLog } from "../lib/database.types";
-import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, Select, StatusPill, Textarea } from "../components/ui";
+import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, SectionTabs, Select, StatCard, StatusPill, Textarea } from "../components/ui";
 import { useAuthStore } from "../context/auth-store";
 
 export function ProjectDetailPage() {
@@ -60,6 +60,12 @@ export function ProjectDetailPage() {
   return (
     <section>
       <PageHeader title={project.title} eyebrow={`${project.artist?.stage_name ?? "Artist"} · ${project.type}`} />
+      <div className="mb-5 grid gap-4 md:grid-cols-4">
+        <StatCard label="Progress" value={`${project.progress ?? 0}%`} />
+        <StatCard label="Checklist Items" value={checklist.length} />
+        <StatCard label="Open Finance Items" value={transactions.filter((tx) => tx.type === "expense").length} />
+        <StatCard label="Assets" value={assets.length} />
+      </div>
       <Panel className="mb-5">
         <div className="grid gap-4 lg:grid-cols-[1fr_320px]">
           <div>
@@ -76,11 +82,7 @@ export function ProjectDetailPage() {
           {canManageProject ? <StatusForm project={project} reload={load} /> : <p className="text-sm text-slate-500">Finance has read-only project access.</p>}
         </div>
       </Panel>
-      <div className="mb-5 flex flex-wrap gap-2">
-        {["checklist", "assets", "marketing", "finance", "team", "audit"].map((item) => (
-          <button key={item} className={`rounded-md px-3 py-2 text-sm capitalize ${tab === item ? "bg-slate-950 text-white" : "bg-white"}`} onClick={() => setTab(item)}>{item}</button>
-        ))}
-      </div>
+      <SectionTabs tabs={["checklist", "assets", "marketing", "finance", "team", "audit"]} active={tab} onChange={setTab} />
       {tab === "checklist" && <ChecklistTab checklist={checklist} project={project} reload={load} canEdit={canUseChecklist} />}
       {tab === "assets" && <AssetsTab project={project} assets={assets} reload={load} canUpload={canUseChecklist} />}
       {tab === "marketing" && <ChecklistTab checklist={checklist.filter((item) => (item.group_name ?? "").toLowerCase().includes("marketing"))} project={project} reload={load} canEdit={canUseChecklist} />}

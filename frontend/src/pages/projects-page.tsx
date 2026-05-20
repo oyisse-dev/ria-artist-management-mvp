@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { Button, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, Panel, Select, StatusPill, Textarea, formatCurrency } from "../components/ui";
+import { Button, EmptyState, ErrorState, Field, Input, LoadingState, PageHeader, Panel, Select, StatCard, StatusPill, Textarea, formatCurrency } from "../components/ui";
 import { createProject, getErrorMessage, listArtists, listProjects } from "../lib/api";
 import { useAuthStore } from "../context/auth-store";
 import type { ProjectWithArtist } from "../lib/api";
@@ -45,6 +45,12 @@ export function ProjectsPage() {
     <section>
       <PageHeader title="Projects" eyebrow="Releases, tours, campaigns" actions={canCreate ? <Button onClick={() => setOpen(!open)}>Create Project</Button> : undefined} />
       {open && <ProjectForm artists={artists} onCreated={async () => { setOpen(false); await load(); }} />}
+      <div className="mb-5 grid gap-4 md:grid-cols-4">
+        <StatCard label="Total" value={projects.length} />
+        <StatCard label="Active" value={projects.filter((project) => project.status !== "completed").length} />
+        <StatCard label="At Risk" value={projects.filter((project) => (project.progress ?? 0) < 35 && project.status !== "completed").length} />
+        <StatCard label="Completed" value={projects.filter((project) => project.status === "completed").length} />
+      </div>
       <Panel className="mb-5">
         <div className="grid gap-3 md:grid-cols-4">
           <Field label="Status"><Select value={status} onChange={(event) => setStatus(event.target.value)}><option value="">All</option>{["planning","pre_production","recording","mix_master","asset_collection","qc","distribution","live","completed"].map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</Select></Field>
@@ -69,6 +75,9 @@ export function ProjectsPage() {
               <span>{project.progress ?? 0}% complete</span>
               <span>{project.target_date ?? "No target"}</span>
             </div>
+            {(project.progress ?? 0) < 35 && project.status !== "completed" && (
+              <p className="mt-2 text-xs font-medium text-amber-700">Needs attention</p>
+            )}
             <p className="mt-3 text-sm text-slate-500">Budget {formatCurrency(project.budget_estimate)} · Actual {formatCurrency(project.actual_cost)}</p>
           </Link>
         ))}

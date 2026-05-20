@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { listBookings, listProjects, listTasks, listTransactions } from "../lib/api";
 import type { BookingWithJoins, ProjectWithArtist, TaskWithJoins, TransactionWithJoins } from "../lib/api";
-import { EmptyState, ErrorState, formatCurrency, LoadingState, PageHeader, Panel, StatusPill } from "../components/ui";
+import { Button, EmptyState, ErrorState, formatCurrency, LoadingState, PageHeader, Panel, StatCard, StatusPill } from "../components/ui";
 
 export function DashboardPage() {
   const [projects, setProjects] = useState<ProjectWithArtist[]>([]);
@@ -29,18 +29,35 @@ export function DashboardPage() {
     const expense = transactions.filter((tx) => tx.type === "expense").reduce((sum, tx) => sum + Number(tx.amount ?? 0), 0);
     return { income, expense, net: income - expense };
   }, [transactions]);
+  const overdueTasks = useMemo(
+    () => tasks.filter((task) => !task.completed && task.due_date && new Date(task.due_date) < new Date()).length,
+    [tasks]
+  );
+  const dueSoonBookings = useMemo(
+    () => bookings.filter((booking) => booking.status !== "completed" && new Date(booking.date) >= new Date()).length,
+    [bookings]
+  );
 
   if (loading) return <LoadingState />;
   if (error) return <ErrorState message={error} />;
 
   return (
     <section>
-      <PageHeader title="Dashboard" eyebrow="Operations" />
+      <PageHeader
+        title="Dashboard"
+        eyebrow="Operations"
+        actions={
+          <>
+            <Link to="/projects"><Button variant="secondary">Review projects</Button></Link>
+            <Link to="/tasks"><Button>Work open tasks</Button></Link>
+          </>
+        }
+      />
       <div className="grid gap-4 md:grid-cols-4">
-        <Metric label="Active Projects" value={projects.filter((p) => p.status !== "completed").length} />
-        <Metric label="Open Tasks" value={tasks.filter((task) => !task.completed).length} />
-        <Metric label="Upcoming Bookings" value={bookings.filter((booking) => booking.status !== "completed").length} />
-        <Metric label="Net" value={formatCurrency(finance.net)} />
+        <StatCard label="Active Projects" value={projects.filter((p) => p.status !== "completed").length} />
+        <StatCard label="Open Tasks" value={tasks.filter((task) => !task.completed).length} />
+        <StatCard label="Overdue Tasks" value={overdueTasks} />
+        <StatCard label="Upcoming Bookings" value={dueSoonBookings} />
       </div>
       <div className="mt-6 grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
         <Panel>
@@ -62,7 +79,10 @@ export function DashboardPage() {
           </div>
         </Panel>
         <Panel>
-          <h3 className="font-semibold">Due Soon</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold">Due Soon</h3>
+            <p className="text-xs text-slate-500">Net: {formatCurrency(finance.net)}</p>
+          </div>
           <div className="mt-3 grid gap-3">
             {tasks.filter((task) => !task.completed).slice(0, 7).map((task) => (
               <div key={task.id} className="rounded-md border border-slate-200 p-3">
@@ -75,14 +95,5 @@ export function DashboardPage() {
         </Panel>
       </div>
     </section>
-  );
-}
-
-function Metric({ label, value }: { label: string; value: string | number }) {
-  return (
-    <Panel>
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">{label}</p>
-      <p className="mt-2 text-2xl font-semibold">{value}</p>
-    </Panel>
   );
 }

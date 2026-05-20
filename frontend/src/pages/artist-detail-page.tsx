@@ -1,6 +1,6 @@
 import { FormEvent, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, Textarea } from "../components/ui";
+import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, SectionTabs, StatCard, Textarea } from "../components/ui";
 import { createContract, createTransaction, getArtist, getErrorMessage, listContracts, listProjects, listTasks, listTransactions, signedAssetUrl, updateArtist, uploadPrivateFile } from "../lib/api";
 import type { Artist, Contract } from "../lib/database.types";
 import type { ProjectWithArtist, TaskWithJoins, TransactionWithJoins } from "../lib/api";
@@ -52,11 +52,13 @@ export function ArtistDetailPage() {
   return (
     <section>
       <PageHeader title={artist.stage_name ?? "Artist"} eyebrow="Artist Profile" />
-      <div className="mb-5 flex flex-wrap gap-2">
-        {["details", "contracts", "projects", "tasks", "finance"].map((item) => (
-          <button key={item} className={`rounded-md px-3 py-2 text-sm capitalize ${tab === item ? "bg-slate-950 text-white" : "bg-white text-slate-700"}`} onClick={() => setTab(item)}>{item}</button>
-        ))}
+      <div className="mb-5 grid gap-4 md:grid-cols-4">
+        <StatCard label="Commission" value={`${artist.commission_rate ?? 20}%`} />
+        <StatCard label="Open Tasks" value={tasks.filter((task) => !task.completed).length} />
+        <StatCard label="Active Projects" value={projects.filter((project) => project.status !== "completed").length} />
+        <StatCard label="Net Revenue" value={formatCurrency(income - expense)} />
       </div>
+      <SectionTabs tabs={["details", "contracts", "projects", "tasks", "finance"]} active={tab} onChange={setTab} />
 
       {tab === "details" && <Details artist={artist} onSaved={setArtist} />}
       {tab === "contracts" && <Contracts artist={artist} contracts={contracts} reload={load} />}
