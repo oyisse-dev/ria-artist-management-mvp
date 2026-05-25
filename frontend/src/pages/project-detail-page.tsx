@@ -1,16 +1,17 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { archiveChecklistItem, createTransaction, getErrorMessage, getProject, listAuditLogs, listProjectAssets, listProjectChecklist, listTransactions, saveChecklistCompletion, signedAssetUrl, updateProject, uploadProjectAsset } from "../lib/api";
+import { archiveChecklistItem, createTransaction, getErrorMessage, getProject, listAuditLogs, listProjectAssets, listProjectChecklist, listTransactions, listUsers, saveChecklistCompletion, signedAssetUrl, updateChecklistItem, updateProject, uploadProjectAsset } from "../lib/api";
 import type { ChecklistWithCompletion, ProjectWithArtist, TransactionWithJoins } from "../lib/api";
-import type { AuditLog } from "../lib/database.types";
+import type { AuditLog, ChecklistCompletion, UserProfile } from "../lib/database.types";
 import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, Select, StatusPill, Textarea } from "../components/ui";
 import { useAuthStore } from "../context/auth-store";
 
 export function ProjectDetailPage() {
-  const { role } = useAuthStore();
+  const { profile, role } = useAuthStore();
   const { id = "" } = useParams();
   const [project, setProject] = useState<ProjectWithArtist | null>(null);
   const [checklist, setChecklist] = useState<ChecklistWithCompletion[]>([]);
+  const [users, setUsers] = useState<UserProfile[]>([]);
   const [transactions, setTransactions] = useState<TransactionWithJoins[]>([]);
   const [audit, setAudit] = useState<AuditLog[]>([]);
   const [assets, setAssets] = useState<Array<{ name: string; id?: string; created_at?: string; metadata?: Record<string, unknown> }>>([]);
@@ -22,14 +23,16 @@ export function ProjectDetailPage() {
     setLoading(true);
     try {
       const projectRow = await getProject(id);
-      const [checklistRows, txRows, auditRows, assetRows] = await Promise.all([
+      const [checklistRows, userRows, txRows, auditRows, assetRows] = await Promise.all([
         listProjectChecklist(id),
+        listUsers(),
         listTransactions(id),
         listAuditLogs(id),
         listProjectAssets(projectRow)
       ]);
       setProject(projectRow);
       setChecklist(checklistRows);
+      setUsers(userRows);
       setTransactions(txRows);
       setAudit(auditRows);
       setAssets(assetRows);
@@ -56,6 +59,16 @@ export function ProjectDetailPage() {
 
   const canManageProject = role === "admin" || role === "manager";
   const canUseChecklist = role === "admin" || role === "manager";
+  const checklistStats = getChecklistStats(checklist);
+  const blockedCompletionItems = checklist.filter((item) => item.required && item.completion?.approval_status !== "approved");
+  const canCompleteProject = blockedCompletionItems.length === 0;
+  const tabCounts: Record<string, number | undefined> = {
+    checklist: checklist.length,
+    assets: assets.length,
+    finance: transactions.length,
+    team: checklist.filter((item) => item.assignee || item.assignee_role).length,
+    audit: audit.length
+  };
 
   return (
     <section>
@@ -71,19 +84,31 @@ export function ProjectDetailPage() {
             <div className="mt-4 h-3 overflow-hidden rounded-full bg-slate-100">
               <div className="h-full bg-teal-600" style={{ width: `${project.progress ?? 0}%` }} />
             </div>
-            <p className="mt-2 text-sm text-slate-600">{project.progress ?? 0}% complete</p>
+            <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-slate-600">
+              <span>{project.progress ?? 0}% complete</span>
+              <span>{checklistStats.approved}/{checklistStats.total} checklist items approved</span>
+              <span>{checklistStats.blocked} blocked</span>
+              <span>{checklistStats.overdue} overdue</span>
+            </div>
+            {!canCompleteProject && (
+              <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+                Completion is blocked until {blockedCompletionItems.length} required checklist item{blockedCompletionItems.length === 1 ? "" : "s"} are approved.
+              </p>
+            )}
           </div>
-          {canManageProject ? <StatusForm project={project} reload={load} /> : <p className="text-sm text-slate-500">Finance has read-only project access.</p>}
+          {canManageProject ? <StatusForm project={project} reload={load} canComplete={canCompleteProject} /> : <p className="text-sm text-slate-500">Finance has read-only project access.</p>}
         </div>
       </Panel>
       <div className="mb-5 flex flex-wrap gap-2">
         {["checklist", "assets", "marketing", "finance", "team", "audit"].map((item) => (
-          <button key={item} className={`rounded-md px-3 py-2 text-sm capitalize ${tab === item ? "bg-slate-950 text-white" : "bg-white"}`} onClick={() => setTab(item)}>{item}</button>
+          <button key={item} className={`rounded-md px-3 py-2 text-sm capitalize ${tab === item ? "bg-slate-950 text-white" : "bg-white"}`} onClick={() => setTab(item)}>
+            {item}{tabCounts[item] !== undefined ? ` (${tabCounts[item]})` : ""}
+          </button>
         ))}
       </div>
-      {tab === "checklist" && <ChecklistTab checklist={checklist} project={project} reload={load} canEdit={canUseChecklist} />}
+      {tab === "checklist" && <ChecklistTab checklist={checklist} allChecklist={checklist} project={project} users={users} currentUserId={profile?.id ?? ""} reload={load} canEdit={canUseChecklist} />}
       {tab === "assets" && <AssetsTab project={project} assets={assets} reload={load} canUpload={canUseChecklist} />}
-      {tab === "marketing" && <ChecklistTab checklist={checklist.filter((item) => (item.group_name ?? "").toLowerCase().includes("marketing"))} project={project} reload={load} canEdit={canUseChecklist} />}
+      {tab === "marketing" && <ChecklistTab checklist={checklist.filter((item) => (item.group_name ?? "").toLowerCase().includes("marketing"))} allChecklist={checklist} project={project} users={users} currentUserId={profile?.id ?? ""} reload={load} canEdit={canUseChecklist} />}
       {tab === "finance" && <FinanceTab project={project} finance={finance} transactions={transactions} reload={load} />}
       {tab === "team" && <TeamTab checklist={checklist} />}
       {tab === "audit" && <AuditTab audit={audit} />}
@@ -91,7 +116,7 @@ export function ProjectDetailPage() {
   );
 }
 
-function StatusForm({ project, reload }: { project: ProjectWithArtist; reload: () => Promise<void> }) {
+function StatusForm({ project, reload, canComplete }: { project: ProjectWithArtist; reload: () => Promise<void>; canComplete: boolean }) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -100,7 +125,13 @@ function StatusForm({ project, reload }: { project: ProjectWithArtist; reload: (
     setSaving(true);
     setError("");
     try {
-      await updateProject(project.id, { status: String(form.get("status")), target_date: String(form.get("target_date") || "") || null, budget_estimate: Number(form.get("budget_estimate") || 0) });
+      const status = String(form.get("status"));
+      if (status === "completed" && !canComplete) {
+        setError("Required checklist items must be approved before completion.");
+        setSaving(false);
+        return;
+      }
+      await updateProject(project.id, { status, target_date: String(form.get("target_date") || "") || null, budget_estimate: Number(form.get("budget_estimate") || 0) });
       await reload();
     } catch (err) {
       setError(getErrorMessage(err, "Could not update project"));
@@ -110,7 +141,7 @@ function StatusForm({ project, reload }: { project: ProjectWithArtist; reload: (
   }
   return (
     <form onSubmit={submit} className="grid gap-2">
-      <Select name="status" defaultValue={project.status}>{["planning","pre_production","recording","mix_master","asset_collection","qc","distribution","live","completed"].map((item) => <option key={item} value={item}>{item.replaceAll("_", " ")}</option>)}</Select>
+      <Select name="status" defaultValue={project.status}>{["planning","pre_production","recording","mix_master","asset_collection","qc","distribution","live","completed"].map((item) => <option key={item} value={item} disabled={item === "completed" && !canComplete}>{item.replaceAll("_", " ")}</option>)}</Select>
       <Input name="target_date" type="date" defaultValue={project.target_date ?? ""} />
       <Input name="budget_estimate" type="number" defaultValue={project.budget_estimate ?? 0} />
       {error && <p className="text-sm text-red-700">{error}</p>}
@@ -119,19 +150,20 @@ function StatusForm({ project, reload }: { project: ProjectWithArtist; reload: (
   );
 }
 
-function ChecklistTab({ checklist, project, reload, canEdit }: { checklist: ChecklistWithCompletion[]; project: ProjectWithArtist; reload: () => Promise<void>; canEdit: boolean }) {
+function ChecklistTab({ checklist, allChecklist, project, users, currentUserId, reload, canEdit }: { checklist: ChecklistWithCompletion[]; allChecklist: ChecklistWithCompletion[]; project: ProjectWithArtist; users: UserProfile[]; currentUserId: string; reload: () => Promise<void>; canEdit: boolean }) {
   const groups = checklist.reduce<Record<string, ChecklistWithCompletion[]>>((acc, item) => {
     const key = item.group_name ?? "General";
     acc[key] = [...(acc[key] ?? []), item];
     return acc;
   }, {});
+  const checklistById = new Map(allChecklist.map((item) => [item.id, item]));
   return (
     <div className="grid gap-4">
       {Object.entries(groups).map(([group, items]) => (
         <Panel key={group}>
           <h3 className="font-semibold">{group}</h3>
           <div className="mt-3 grid gap-3">
-            {items.map((item) => <ChecklistRow key={item.id} item={item} project={project} reload={reload} canEdit={canEdit} />)}
+            {items.map((item) => <ChecklistRow key={item.id} item={item} dependency={item.depends_on ? checklistById.get(item.depends_on) ?? null : null} project={project} users={users} currentUserId={currentUserId} reload={reload} canEdit={canEdit} />)}
           </div>
         </Panel>
       ))}
@@ -140,12 +172,23 @@ function ChecklistTab({ checklist, project, reload, canEdit }: { checklist: Chec
   );
 }
 
-function ChecklistRow({ item, project, reload, canEdit }: { item: ChecklistWithCompletion; project: ProjectWithArtist; reload: () => Promise<void>; canEdit: boolean }) {
+function ChecklistRow({ item, dependency, project, users, currentUserId, reload, canEdit }: { item: ChecklistWithCompletion; dependency: ChecklistWithCompletion | null; project: ProjectWithArtist; users: UserProfile[]; currentUserId: string; reload: () => Promise<void>; canEdit: boolean }) {
   const status = item.completion?.approval_status ?? "pending";
   const [error, setError] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectionComment, setRejectionComment] = useState(item.completion?.rejection_comment ?? "");
+  const [savingAssignee, setSavingAssignee] = useState(false);
+  const isApproved = status === "approved";
+  const isSubmitted = status === "submitted";
+  const isRejected = status === "rejected";
+  const dependencyApproved = !dependency || dependency.completion?.approval_status === "approved";
+  const isBlocked = !dependencyApproved;
+  const dueState = getDueState(item.due_date);
+  const submitLabel = isRejected ? "Resubmit" : "Submit";
+
   async function upload(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (!file) return;
+    if (!file || isBlocked || isApproved) return;
     setError("");
     try {
       const path = await uploadProjectAsset(project, file, "checklist");
@@ -155,38 +198,81 @@ function ChecklistRow({ item, project, reload, canEdit }: { item: ChecklistWithC
       setError(getErrorMessage(err, "Could not upload checklist file"));
     }
   }
-  async function setStatus(next: string) {
+  async function setStatus(next: ChecklistCompletion["approval_status"], comment?: string) {
+    if ((next === "submitted" || next === "approved") && isBlocked) {
+      setError(`Blocked until "${dependency?.item_name ?? "the dependency"}" is approved.`);
+      return;
+    }
     setError("");
     try {
-      await saveChecklistCompletion(item.id, { approval_status: next, approved_at: next === "approved" ? new Date().toISOString() : null, rejection_comment: next === "rejected" ? "Needs revision" : null });
+      await saveChecklistCompletion(item.id, {
+        approval_status: next,
+        approver_id: next === "approved" || next === "rejected" ? currentUserId || null : item.completion?.approver_id ?? null,
+        approved_at: next === "approved" ? new Date().toISOString() : null,
+        completed_at: next === "submitted" ? new Date().toISOString() : item.completion?.completed_at ?? null,
+        rejection_comment: next === "rejected" ? comment || "Needs revision" : null
+      });
+      setRejecting(false);
       await reload();
     } catch (err) {
       setError(getErrorMessage(err, "Could not update checklist item"));
     }
   }
+  async function saveAssignment(event: React.ChangeEvent<HTMLSelectElement>) {
+    setSavingAssignee(true);
+    setError("");
+    try {
+      await updateChecklistItem(item.id, { assigned_to: event.target.value || null });
+      await reload();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not update assignee"));
+    } finally {
+      setSavingAssignee(false);
+    }
+  }
   return (
-    <div className="rounded-md border border-slate-200 p-3">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+    <div className={`rounded-md border p-3 ${isBlocked ? "border-amber-200 bg-amber-50/50" : dueState === "overdue" && !isApproved ? "border-red-200 bg-red-50/40" : "border-slate-200 bg-white"}`}>
+      <div className="grid gap-3 lg:grid-cols-[1fr_auto] lg:items-start">
         <div>
           <p className="font-medium">{item.item_name} {item.required && <span className="text-red-600">*</span>}</p>
-          <p className="text-sm text-slate-500">{item.assignee?.full_name ?? item.assignee_role ?? "Unassigned"} · Due {item.due_date ?? item.due_offset_days ?? "not set"}</p>
-          {item.depends_on && <p className="text-xs text-amber-700">Depends on another checklist item.</p>}
+          <p className="text-sm text-slate-500">{item.assignee?.full_name ?? item.assignee_role ?? "Unassigned"} · Due {formatDueLabel(item.due_date, item.due_offset_days)}</p>
+          {dueState !== "none" && !isApproved && <p className={`text-xs ${dueState === "overdue" ? "text-red-700" : "text-amber-700"}`}>{dueState === "overdue" ? "Overdue" : "Due soon"}</p>}
+          {isBlocked && <p className="text-xs text-amber-700">Blocked until "{dependency?.item_name ?? "dependency"}" is approved.</p>}
           {item.completion?.file_names?.length ? <p className="mt-1 text-xs text-slate-500">Files: {item.completion.file_names.join(", ")}</p> : null}
+          {item.completion?.rejection_comment && <p className="mt-2 rounded-md bg-red-50 p-2 text-sm text-red-700">Rejected: {item.completion.rejection_comment}</p>}
           {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
+          {canEdit && (
+            <div className="mt-3 grid max-w-xl gap-2 sm:grid-cols-[1fr_auto]">
+              <Select value={item.assigned_to ?? ""} onChange={saveAssignment} disabled={savingAssignee || isApproved}>
+                <option value="">Unassigned</option>
+                {users.map((user) => <option key={user.id} value={user.id}>{user.full_name ?? user.email ?? "Unnamed user"}</option>)}
+              </Select>
+              <span className="self-center text-xs text-slate-500">{savingAssignee ? "Saving assignee..." : "Assignee"}</span>
+            </div>
+          )}
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 lg:justify-end">
           <StatusPill>{status}</StatusPill>
           {canEdit && (
             <>
-              <Input type="file" onChange={upload} className="max-w-52" />
-              <Button variant="secondary" onClick={() => setStatus("submitted")}>Submit</Button>
-              <Button variant="secondary" onClick={() => setStatus("approved")}>Approve</Button>
-              <Button variant="secondary" onClick={() => setStatus("rejected")}>Reject</Button>
-              <Button variant="danger" onClick={async () => { await archiveChecklistItem(item.id); await reload(); }}>Archive</Button>
+              {!isApproved && <Input type="file" onChange={upload} className="max-w-52" disabled={isBlocked} />}
+              {(status === "pending" || isRejected) && <Button variant="secondary" disabled={isBlocked} onClick={() => setStatus("submitted")}>{submitLabel}</Button>}
+              {isSubmitted && <Button variant="secondary" disabled={isBlocked} onClick={() => setStatus("approved")}>Approve</Button>}
+              {isSubmitted && <Button variant="secondary" onClick={() => setRejecting((open) => !open)}>Reject</Button>}
+              {!isApproved && <Button variant="danger" onClick={async () => { await archiveChecklistItem(item.id); await reload(); }}>Archive</Button>}
             </>
           )}
         </div>
       </div>
+      {rejecting && (
+        <div className="mt-3 grid gap-2 border-t border-slate-200 pt-3">
+          <Field label="Rejection Comment"><Textarea value={rejectionComment} onChange={(event) => setRejectionComment(event.target.value)} /></Field>
+          <div className="flex gap-2">
+            <Button variant="danger" onClick={() => setStatus("rejected", rejectionComment)}>Save Rejection</Button>
+            <Button variant="secondary" onClick={() => setRejecting(false)}>Cancel</Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -268,4 +354,41 @@ function TeamTab({ checklist }: { checklist: ChecklistWithCompletion[] }) {
 
 function AuditTab({ audit }: { audit: AuditLog[] }) {
   return <Panel><div className="grid gap-2">{audit.map((row) => <div key={row.id} className="rounded-md border p-3 text-sm">{row.changed_at} · {row.action} · {row.table_name}</div>)}{audit.length === 0 && <EmptyState>No audit entries for this record.</EmptyState>}</div></Panel>;
+}
+
+function getChecklistStats(checklist: ChecklistWithCompletion[]) {
+  const checklistById = new Map(checklist.map((item) => [item.id, item]));
+  return checklist.reduce(
+    (stats, item) => {
+      const status = item.completion?.approval_status ?? "pending";
+      const dependency = item.depends_on ? checklistById.get(item.depends_on) : null;
+      const blocked = dependency ? dependency.completion?.approval_status !== "approved" : false;
+      const dueState = getDueState(item.due_date);
+      return {
+        total: stats.total + 1,
+        approved: stats.approved + (status === "approved" ? 1 : 0),
+        submitted: stats.submitted + (status === "submitted" ? 1 : 0),
+        blocked: stats.blocked + (blocked ? 1 : 0),
+        overdue: stats.overdue + (dueState === "overdue" && status !== "approved" ? 1 : 0)
+      };
+    },
+    { total: 0, approved: 0, submitted: 0, blocked: 0, overdue: 0 }
+  );
+}
+
+function getDueState(date: string | null) {
+  if (!date) return "none";
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const due = new Date(`${date}T00:00:00`);
+  const diffDays = Math.floor((due.getTime() - today.getTime()) / 86400000);
+  if (diffDays < 0) return "overdue";
+  if (diffDays <= 3) return "due-soon";
+  return "none";
+}
+
+function formatDueLabel(date: string | null, offset: number | null) {
+  if (date) return date;
+  if (typeof offset === "number") return `${offset} day${offset === 1 ? "" : "s"} from project start`;
+  return "not set";
 }

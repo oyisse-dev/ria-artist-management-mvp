@@ -224,6 +224,12 @@ export async function archiveChecklistItem(id: string) {
   return data;
 }
 
+export async function updateChecklistItem(id: string, payload: Partial<Pick<ProjectChecklist, "assigned_to" | "due_date" | "required" | "group_name">>) {
+  const { data, error } = await supabase.from("project_checklists").update(payload).eq("id", id).select().single();
+  throwIf(error);
+  return data;
+}
+
 export async function uploadProjectAsset(project: Project, file: File, category = "assets") {
   const safeName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9_.-]/g, "_")}`;
   const path = `${project.artist_id}/${project.id}/${category}/${safeName}`;
