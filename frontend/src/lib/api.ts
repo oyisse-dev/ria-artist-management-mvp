@@ -20,6 +20,18 @@ export type TaskWithJoins = Task & { artist?: Pick<Artist, "id" | "stage_name"> 
 export type TransactionWithJoins = Transaction & { artist?: Pick<Artist, "id" | "stage_name" | "commission_rate"> | null; project?: Pick<Project, "id" | "title"> | null };
 export type BookingWithJoins = Booking & { artist?: Pick<Artist, "id" | "stage_name"> | null; project?: Pick<Project, "id" | "title"> | null };
 export type ArtistAssignmentWithJoins = ArtistAssignment & { artist?: Pick<Artist, "id" | "stage_name"> | null; user?: Pick<UserProfile, "id" | "full_name" | "email" | "role" | "is_active"> | null };
+export type ProjectAssetCategory = "artwork" | "audio" | "video" | "documents" | "marketing" | "checklist" | "assets";
+export type ProjectAsset = {
+  name: string;
+  path: string;
+  category: ProjectAssetCategory | string;
+  id?: string;
+  created_at?: string;
+  updated_at?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export const PROJECT_ASSET_CATEGORIES: ProjectAssetCategory[] = ["artwork", "audio", "video", "documents", "marketing", "checklist", "assets"];
 
 export function getErrorMessage(error: unknown, fallback = "Request failed") {
   if (error instanceof Error) return error.message;
@@ -239,15 +251,33 @@ export async function uploadProjectAsset(project: Project, file: File, category 
 }
 
 export async function listProjectAssets(project: Project) {
-  const prefix = `${project.artist_id}/${project.id}/assets`;
-  const { data, error } = await supabase.storage.from("project-assets").list(prefix, { limit: 100, sortBy: { column: "created_at", order: "desc" } });
+  const basePath = `${project.artist_id}/${project.id}`;
+  const results = await Promise.all(
+    PROJECT_ASSET_CATEGORIES.map(async (category) => {
+      const { data, error } = await supabase.storage
+        .from("project-assets")
+        .list(`${basePath}/${category}`, { limit: 100, sortBy: { column: "created_at", order: "desc" } });
+      throwIf(error);
+      return (data ?? [])
+        .filter((item) => item.name && item.id)
+        .map((item) => ({
+          name: item.name,
+          path: `${basePath}/${category}/${item.name}`,
+          category,
+          id: item.id ?? undefined,
+          created_at: item.created_at ?? undefined,
+          updated_at: item.updated_at ?? undefined,
+          metadata: item.metadata as Record<string, unknown> | undefined
+        }));
+    })
+  );
+  return results.flat().sort((a, b) => Date.parse(b.created_at ?? "0") - Date.parse(a.created_at ?? "0")) as ProjectAsset[];
+}
+
+export async function deleteProjectAsset(path: string) {
+  const { data, error } = await supabase.storage.from("project-assets").remove([path]);
   throwIf(error);
-  return (data ?? []).map((item) => ({
-    name: item.name,
-    id: item.id ?? undefined,
-    created_at: item.created_at ?? undefined,
-    metadata: item.metadata as Record<string, unknown> | undefined
-  }));
+  return data;
 }
 
 export async function signedAssetUrl(path: string, bucket = "project-assets") {

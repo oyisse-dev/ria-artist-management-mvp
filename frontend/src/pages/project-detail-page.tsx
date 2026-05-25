@@ -1,7 +1,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { archiveChecklistItem, createTransaction, getErrorMessage, getProject, listAuditLogs, listProjectAssets, listProjectChecklist, listTransactions, listUsers, saveChecklistCompletion, signedAssetUrl, updateChecklistItem, updateProject, uploadProjectAsset } from "../lib/api";
-import type { ChecklistWithCompletion, ProjectWithArtist, TransactionWithJoins } from "../lib/api";
+import { archiveChecklistItem, createTransaction, deleteProjectAsset, getErrorMessage, getProject, listAuditLogs, listProjectAssets, listProjectChecklist, listTransactions, listUsers, PROJECT_ASSET_CATEGORIES, saveChecklistCompletion, signedAssetUrl, updateChecklistItem, updateProject, uploadPrivateFile, uploadProjectAsset } from "../lib/api";
+import type { ChecklistWithCompletion, ProjectAsset, ProjectAssetCategory, ProjectWithArtist, TransactionWithJoins } from "../lib/api";
 import type { AuditLog, ChecklistCompletion, UserProfile } from "../lib/database.types";
 import { Button, EmptyState, ErrorState, Field, formatCurrency, Input, LoadingState, PageHeader, Panel, Select, StatusPill, Textarea } from "../components/ui";
 import { useAuthStore } from "../context/auth-store";
@@ -14,7 +14,7 @@ export function ProjectDetailPage() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [transactions, setTransactions] = useState<TransactionWithJoins[]>([]);
   const [audit, setAudit] = useState<AuditLog[]>([]);
-  const [assets, setAssets] = useState<Array<{ name: string; id?: string; created_at?: string; metadata?: Record<string, unknown> }>>([]);
+  const [assets, setAssets] = useState<ProjectAsset[]>([]);
   const [tab, setTab] = useState("checklist");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -107,7 +107,7 @@ export function ProjectDetailPage() {
         ))}
       </div>
       {tab === "checklist" && <ChecklistTab checklist={checklist} allChecklist={checklist} project={project} users={users} currentUserId={profile?.id ?? ""} reload={load} canEdit={canUseChecklist} />}
-      {tab === "assets" && <AssetsTab project={project} assets={assets} reload={load} canUpload={canUseChecklist} />}
+      {tab === "assets" && <AssetsTab project={project} assets={assets} checklist={checklist} reload={load} canUpload={canUseChecklist} canDelete={role === "admin"} />}
       {tab === "marketing" && <ChecklistTab checklist={checklist.filter((item) => (item.group_name ?? "").toLowerCase().includes("marketing"))} allChecklist={checklist} project={project} users={users} currentUserId={profile?.id ?? ""} reload={load} canEdit={canUseChecklist} />}
       {tab === "finance" && <FinanceTab project={project} finance={finance} transactions={transactions} reload={load} />}
       {tab === "team" && <TeamTab checklist={checklist} />}
@@ -238,7 +238,13 @@ function ChecklistRow({ item, dependency, project, users, currentUserId, reload,
           <p className="text-sm text-slate-500">{item.assignee?.full_name ?? item.assignee_role ?? "Unassigned"} · Due {formatDueLabel(item.due_date, item.due_offset_days)}</p>
           {dueState !== "none" && !isApproved && <p className={`text-xs ${dueState === "overdue" ? "text-red-700" : "text-amber-700"}`}>{dueState === "overdue" ? "Overdue" : "Due soon"}</p>}
           {isBlocked && <p className="text-xs text-amber-700">Blocked until "{dependency?.item_name ?? "dependency"}" is approved.</p>}
-          {item.completion?.file_names?.length ? <p className="mt-1 text-xs text-slate-500">Files: {item.completion.file_names.join(", ")}</p> : null}
+          {item.completion?.file_urls?.length ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {item.completion.file_urls.map((path, index) => (
+                <SignedFileButton key={path} bucket="project-assets" path={path} label={item.completion?.file_names?.[index] ?? fileNameFromPath(path)} />
+              ))}
+            </div>
+          ) : null}
           {item.completion?.rejection_comment && <p className="mt-2 rounded-md bg-red-50 p-2 text-sm text-red-700">Rejected: {item.completion.rejection_comment}</p>}
           {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
           {canEdit && (
@@ -277,34 +283,113 @@ function ChecklistRow({ item, dependency, project, users, currentUserId, reload,
   );
 }
 
-function AssetsTab({ project, assets, reload, canUpload }: { project: ProjectWithArtist; assets: Array<{ name: string; created_at?: string }>; reload: () => Promise<void>; canUpload: boolean }) {
+function AssetsTab({ project, assets, checklist, reload, canUpload, canDelete }: { project: ProjectWithArtist; assets: ProjectAsset[]; checklist: ChecklistWithCompletion[]; reload: () => Promise<void>; canUpload: boolean; canDelete: boolean }) {
+  const [category, setCategory] = useState<ProjectAssetCategory>("artwork");
+  const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const checklistFileMap = useMemo(() => {
+    const map = new Map<string, string>();
+    checklist.forEach((item) => {
+      item.completion?.file_urls?.forEach((path) => map.set(path, item.item_name));
+    });
+    return map;
+  }, [checklist]);
+  const groupedAssets = assets.reduce<Record<string, ProjectAsset[]>>((acc, asset) => {
+    acc[asset.category] = [...(acc[asset.category] ?? []), asset];
+    return acc;
+  }, {});
   async function upload(event: React.ChangeEvent<HTMLInputElement>) {
     const files = Array.from(event.target.files ?? []);
+    if (files.length === 0) return;
+    setSaving(true);
     setError("");
     try {
-      await Promise.all(files.map((file) => uploadProjectAsset(project, file)));
+      await Promise.all(files.map((file) => uploadProjectAsset(project, file, category)));
       await reload();
+      event.target.value = "";
     } catch (err) {
       setError(getErrorMessage(err, "Could not upload project assets"));
+    } finally {
+      setSaving(false);
     }
   }
   return (
     <Panel>
-      {canUpload ? <Field label="Bulk Upload"><Input type="file" multiple onChange={upload} /></Field> : <p className="text-sm text-slate-500">Finance can view assets but cannot upload new files.</p>}
+      {canUpload ? (
+        <div className="grid gap-3 md:grid-cols-[220px_1fr]">
+          <Field label="Category">
+            <Select value={category} onChange={(event) => setCategory(event.target.value as ProjectAssetCategory)}>
+              {PROJECT_ASSET_CATEGORIES.filter((item) => item !== "checklist").map((item) => <option key={item} value={item}>{assetCategoryLabel(item)}</option>)}
+            </Select>
+          </Field>
+          <Field label="Upload Files">
+            <Input type="file" multiple onChange={upload} disabled={saving} />
+          </Field>
+          {saving && <p className="text-sm text-slate-500 md:col-span-2">Uploading files...</p>}
+        </div>
+      ) : <p className="text-sm text-slate-500">Finance can view assets but cannot upload new files.</p>}
       {error && <p className="mt-2 text-sm text-red-700">{error}</p>}
-      <div className="mt-4 grid gap-2">
-        {assets.map((asset) => <AssetLink key={asset.name} project={project} name={asset.name} />)}
+      <div className="mt-4 grid gap-4">
+        {Object.entries(groupedAssets).map(([group, groupAssets]) => (
+          <div key={group}>
+            <h3 className="mb-2 text-sm font-semibold text-slate-700">{assetCategoryLabel(group)}</h3>
+            <div className="grid gap-2">
+              {groupAssets.map((asset) => <AssetLink key={asset.path} asset={asset} linkedChecklistItem={checklistFileMap.get(asset.path)} canDelete={canDelete} reload={reload} />)}
+            </div>
+          </div>
+        ))}
         {assets.length === 0 && <EmptyState>No project assets uploaded.</EmptyState>}
       </div>
     </Panel>
   );
 }
 
-function AssetLink({ project, name }: { project: ProjectWithArtist; name: string }) {
+function AssetLink({ asset, linkedChecklistItem, canDelete, reload }: { asset: ProjectAsset; linkedChecklistItem?: string; canDelete: boolean; reload: () => Promise<void> }) {
   const [url, setUrl] = useState("");
-  const path = `${project.artist_id}/${project.id}/assets/${name}`;
-  return <div className="flex justify-between rounded-md border p-3 text-sm"><span>{name}</span>{url ? <a className="text-teal-700" href={url} target="_blank" rel="noreferrer">Open</a> : <button className="text-teal-700" onClick={async () => setUrl(await signedAssetUrl(path))}>Get Link</button>}</div>;
+  const [deleting, setDeleting] = useState(false);
+  async function remove() {
+    setDeleting(true);
+    try {
+      await deleteProjectAsset(asset.path);
+      await reload();
+    } finally {
+      setDeleting(false);
+    }
+  }
+  return (
+    <div className="grid gap-3 rounded-md border border-slate-200 p-3 text-sm md:grid-cols-[1fr_auto] md:items-center">
+      <div className="min-w-0">
+        <p className="truncate font-medium text-slate-900">{asset.name}</p>
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-slate-500">
+          <span>{formatFileSize(asset.metadata?.size)}</span>
+          <span>{formatDateTime(asset.created_at)}</span>
+          {linkedChecklistItem && <span>Checklist: {linkedChecklistItem}</span>}
+        </div>
+      </div>
+      <div className="flex flex-wrap gap-2 md:justify-end">
+        {url ? <a className="inline-flex min-h-10 items-center rounded-md border border-slate-300 px-3 text-sm text-teal-700" href={url} target="_blank" rel="noreferrer">Open</a> : <Button variant="secondary" onClick={async () => setUrl(await signedAssetUrl(asset.path))}>Get Link</Button>}
+        {canDelete && <Button variant="danger" disabled={deleting} onClick={remove}>{deleting ? "Deleting..." : "Delete"}</Button>}
+      </div>
+    </div>
+  );
+}
+
+function SignedFileButton({ bucket, path, label }: { bucket: string; path: string; label: string }) {
+  const [url, setUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  async function openLink() {
+    setLoading(true);
+    try {
+      setUrl(await signedAssetUrl(path, bucket));
+    } finally {
+      setLoading(false);
+    }
+  }
+  return url ? (
+    <a className="inline-flex min-h-9 items-center rounded-md border border-slate-300 px-3 text-sm text-teal-700" href={url} target="_blank" rel="noreferrer">{label}</a>
+  ) : (
+    <Button type="button" variant="secondary" disabled={loading} onClick={openLink}>{loading ? "Loading..." : label}</Button>
+  );
 }
 
 function FinanceTab({ project, finance, transactions, reload }: { project: ProjectWithArtist; finance: { income: number; expense: number; net: number }; transactions: TransactionWithJoins[]; reload: () => Promise<void> }) {
@@ -316,7 +401,9 @@ function FinanceTab({ project, finance, transactions, reload }: { project: Proje
     setSaving(true);
     setError("");
     try {
-      await createTransaction({ artist_id: project.artist_id, project_id: project.id, type: String(form.get("type")), amount: Number(form.get("amount")), category: String(form.get("category")), date: String(form.get("date")), description: String(form.get("description")) });
+      const receipt = form.get("receipt");
+      const receiptUrl = receipt instanceof File && receipt.name ? await uploadPrivateFile("receipts", project.artist_id, receipt, `${project.id}/receipts`) : null;
+      await createTransaction({ artist_id: project.artist_id, project_id: project.id, type: String(form.get("type")), amount: Number(form.get("amount")), category: String(form.get("category")), date: String(form.get("date")), description: String(form.get("description")), receipt_url: receiptUrl });
       await reload();
       event.currentTarget.reset();
     } catch (err) {
@@ -333,16 +420,24 @@ function FinanceTab({ project, finance, transactions, reload }: { project: Proje
         <strong>Net {formatCurrency(finance.net)}</strong>
         <strong>Budget {formatCurrency(project.budget_estimate)}</strong>
       </div>
-      <form onSubmit={submit} className="grid gap-3 md:grid-cols-5">
+      <form onSubmit={submit} className="grid gap-3 md:grid-cols-6">
         <Field label="Type"><Select name="type"><option value="income">Income</option><option value="expense">Expense</option></Select></Field>
         <Field label="Category"><Input name="category" /></Field>
         <Field label="Amount"><Input name="amount" type="number" required /></Field>
         <Field label="Date"><Input name="date" type="date" required /></Field>
         <Field label="Description"><Input name="description" /></Field>
-        {error && <p className="text-sm text-red-700 md:col-span-5">{error}</p>}
-        <div className="md:col-span-5"><Button disabled={saving}>{saving ? "Saving..." : "Add Transaction"}</Button></div>
+        <Field label="Receipt"><Input name="receipt" type="file" accept="application/pdf,image/*" /></Field>
+        {error && <p className="text-sm text-red-700 md:col-span-6">{error}</p>}
+        <div className="md:col-span-6"><Button disabled={saving}>{saving ? "Saving..." : "Add Transaction"}</Button></div>
       </form>
-      <div className="mt-4 grid gap-2">{transactions.map((tx) => <div key={tx.id} className="rounded-md border p-3 text-sm">{tx.date} · {tx.type} · {tx.category} · {formatCurrency(tx.amount)}</div>)}</div>
+      <div className="mt-4 grid gap-2">
+        {transactions.map((tx) => (
+          <div key={tx.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm">
+            <span>{tx.date} · {tx.type} · {tx.category} · {formatCurrency(tx.amount)}</span>
+            {tx.receipt_url && <SignedFileButton bucket="receipts" path={tx.receipt_url} label="Receipt" />}
+          </div>
+        ))}
+      </div>
     </Panel>
   );
 }
@@ -391,4 +486,25 @@ function formatDueLabel(date: string | null, offset: number | null) {
   if (date) return date;
   if (typeof offset === "number") return `${offset} day${offset === 1 ? "" : "s"} from project start`;
   return "not set";
+}
+
+function fileNameFromPath(path: string) {
+  return path.split("/").pop() ?? path;
+}
+
+function assetCategoryLabel(category: string) {
+  return category.replaceAll("-", " ").replaceAll("_", " ");
+}
+
+function formatFileSize(value: unknown) {
+  const size = Number(value ?? 0);
+  if (!size) return "Unknown size";
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${Math.round(size / 1024)} KB`;
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatDateTime(date: string | null | undefined) {
+  if (!date) return "Date unavailable";
+  return new Intl.DateTimeFormat("en-UG", { dateStyle: "medium", timeStyle: "short" }).format(new Date(date));
 }

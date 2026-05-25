@@ -71,7 +71,12 @@ export function ArtistDetailPage() {
           </div>
           <TransactionQuickForm artist={artist} reload={load} />
           <div className="mt-4 grid gap-2">
-            {transactions.map((tx) => <div key={tx.id} className="rounded-md border p-3 text-sm">{tx.date} · {tx.type} · {tx.category} · {formatCurrency(tx.amount)}</div>)}
+            {transactions.map((tx) => (
+              <div key={tx.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border p-3 text-sm">
+                <span>{tx.date} · {tx.type} · {tx.category} · {formatCurrency(tx.amount)}</span>
+                {tx.receipt_url && <SignedFileLink bucket="receipts" path={tx.receipt_url} label="Receipt" />}
+              </div>
+            ))}
           </div>
         </Panel>
       )}
@@ -163,12 +168,13 @@ function Contracts({ artist, contracts, reload }: { artist: Artist; contracts: C
 }
 
 function ContractLink({ contract }: { contract: Contract }) {
-  const [url, setUrl] = useState("");
   return (
     <div className="flex items-center justify-between rounded-md border p-3">
-      <span>{contract.title}</span>
-      <button className="text-sm text-teal-700" onClick={async () => setUrl(await signedAssetUrl(contract.file_url ?? "", "contracts"))}>Get Link</button>
-      {url && <a className="text-sm text-teal-700" href={url} target="_blank" rel="noreferrer">Open</a>}
+      <div>
+        <p className="font-medium">{contract.title}</p>
+        <p className="text-xs text-slate-500">Signed {contract.signed_date ?? "not set"} · Expires {contract.expiry_date ?? "not set"}</p>
+      </div>
+      {contract.file_url && <SignedFileLink bucket="contracts" path={contract.file_url} label="Open" />}
     </div>
   );
 }
@@ -182,7 +188,9 @@ function TransactionQuickForm({ artist, reload }: { artist: Artist; reload: () =
     setSaving(true);
     setError("");
     try {
-      await createTransaction({ artist_id: artist.id, type: String(form.get("type")), category: String(form.get("category")), amount: Number(form.get("amount")), date: String(form.get("date")), description: String(form.get("description")) });
+      const receipt = form.get("receipt");
+      const receiptUrl = receipt instanceof File && receipt.name ? await uploadPrivateFile("receipts", artist.id, receipt, "receipts") : null;
+      await createTransaction({ artist_id: artist.id, type: String(form.get("type")), category: String(form.get("category")), amount: Number(form.get("amount")), date: String(form.get("date")), description: String(form.get("description")), receipt_url: receiptUrl });
       await reload();
       event.currentTarget.reset();
     } catch (err) {
@@ -192,14 +200,33 @@ function TransactionQuickForm({ artist, reload }: { artist: Artist; reload: () =
     }
   }
   return (
-    <form onSubmit={submit} className="grid gap-3 md:grid-cols-5">
+    <form onSubmit={submit} className="grid gap-3 md:grid-cols-6">
       <Field label="Type"><select name="type" className="min-h-10 rounded-md border px-3"><option value="income">Income</option><option value="expense">Expense</option></select></Field>
       <Field label="Category"><Input name="category" /></Field>
       <Field label="Amount"><Input name="amount" type="number" required /></Field>
       <Field label="Date"><Input name="date" type="date" required /></Field>
       <Field label="Description"><Input name="description" /></Field>
-      {error && <p className="text-sm text-red-700 md:col-span-5">{error}</p>}
-      <div className="md:col-span-5"><Button disabled={saving}>{saving ? "Saving..." : "Add Transaction"}</Button></div>
+      <Field label="Receipt"><Input name="receipt" type="file" accept="application/pdf,image/*" /></Field>
+      {error && <p className="text-sm text-red-700 md:col-span-6">{error}</p>}
+      <div className="md:col-span-6"><Button disabled={saving}>{saving ? "Saving..." : "Add Transaction"}</Button></div>
     </form>
+  );
+}
+
+function SignedFileLink({ bucket, path, label }: { bucket: string; path: string; label: string }) {
+  const [url, setUrl] = useState("");
+  const [loading, setLoading] = useState(false);
+  async function getLink() {
+    setLoading(true);
+    try {
+      setUrl(await signedAssetUrl(path, bucket));
+    } finally {
+      setLoading(false);
+    }
+  }
+  return url ? (
+    <a className="text-sm text-teal-700" href={url} target="_blank" rel="noreferrer">{label}</a>
+  ) : (
+    <button className="text-sm text-teal-700 disabled:opacity-50" type="button" disabled={loading} onClick={getLink}>{loading ? "Loading..." : label}</button>
   );
 }
